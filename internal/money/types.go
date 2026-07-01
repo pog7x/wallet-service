@@ -35,6 +35,7 @@ func (m Money) Currency() Currency {
 // Add returns the sum of m and o. The bool is false when the currencies
 // differ, in which case the returned Money is not meaningful.
 func (m Money) Add(o Money) (Money, bool) {
+	// TODO: overflow
 	if m.currency != o.currency {
 		return Money{}, false
 	}
@@ -53,7 +54,12 @@ func (m Money) Sub(o Money) (Money, bool) {
 // Format returns the amount as a decimal string with its currency,
 // for example "12.34 USD".
 func (m Money) Format() string {
-	return fmt.Sprintf("%d.%.2d %s", m.Amount()/100, m.Amount()%100, m.Currency())
+	absVal, prefix := m.Amount(), ""
+	if m.Amount() < 0 {
+		prefix = "-"
+		absVal = -absVal
+	}
+	return fmt.Sprintf("%s%d.%02d %s", prefix, absVal/100, absVal%100, m.Currency())
 }
 
 // ParseMoney parses a decimal string with up to two fractional digits
@@ -65,41 +71,38 @@ func ParseMoney(s string, currency Currency) (Money, bool) {
 	}
 
 	split := strings.Split(s, ".")
-	if len(split) == 0 || len(split) > 2 {
+	if len(split) > 2 {
 		return Money{}, false
 	}
 
-	var err error
-	var doParsed int64
-	if split[0] != "" {
-		doParsed, err = strconv.ParseInt(split[0], 10, 64)
-		if err != nil {
-			return Money{}, false
-		}
-	}
-
-	if len(split) == 1 {
-		toReturn := doParsed * 100
-		return Money{amount: toReturn, currency: currency}, toReturn != 0
-	}
-
-	var posle string
-
-	switch {
-	case len(split[1]) == 1:
-		posle = split[1] + "0"
-	case len(split[1]) >= 2:
-		posle = split[1][0:2]
-	default:
-		posle = "0"
-	}
-
-	posleParsed, err := strconv.ParseInt(posle, 10, 64)
+	intPart, err := strconv.ParseInt(split[0], 10, 64)
 	if err != nil {
 		return Money{}, false
 	}
 
-	toReturn := doParsed*100 + posleParsed
+	if len(split) == 1 {
+		// TODO: overflow
+		return Money{amount: intPart * 100, currency: currency}, true
+	}
 
-	return Money{amount: toReturn, currency: currency}, toReturn != 0
+	var frac string
+
+	switch {
+	case len(split[1]) == 1:
+		frac = split[1] + "0"
+	case len(split[1]) == 2:
+		frac = split[1][0:2]
+	case len(split[1]) > 2:
+		return Money{}, false
+	default:
+		frac = "0"
+	}
+
+	fracPart, err := strconv.ParseInt(frac, 10, 64)
+	if err != nil {
+		return Money{}, false
+	}
+
+	// TODO: overflow
+	return Money{amount: intPart*100 + fracPart, currency: currency}, true
 }

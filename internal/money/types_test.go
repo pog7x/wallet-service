@@ -72,30 +72,36 @@ func TestParseMoney(t *testing.T) {
 		wantAmount int64
 		wantOK     bool
 	}{
+		{"only zero", "0", 0, true},
+		{"zero with 0", "0.0", 0, true},
+		{"zero with 00", "0.00", 0, true},
 		{"integer only", "12", 1200, true},
 		{"integer with dot", "12.", 1200, true},
 		{"two decimals", "12.34", 1234, true},
+		{"leading plus", "+12.34", 1234, true},
 		{"one decimal is tens", "0.5", 50, true},
-		{"no integer part is tens it's OK", ".5", 50, true},
+		{"no integer part, not OK", ".5", 0, false},
 		{"leading zero decimal five cents", "0.05", 5, true},
+		{"comma sep", "12,34", 0, false},
 		{"empty string", "", 0, false},
 		{"negative", "-5000", 0, false},
 		{"multiple dots", "12.3.4", 0, false},
 		{"only dot", ".", 0, false},
 		{"letters", "abc", 0, false},
-		{"one character", "12.3x", 0, false},
+		{"character after digits", "12.3x", 0, false},
+		{"three digits after dot", "12.999", 0, false},
+		{"colon", ":", 0, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, ok := ParseMoney(tt.input, "USD")
 
-			if ok != tt.wantOK {
-				t.Fatalf("ParseMoney(%q) ok = %v, want %v", tt.input, ok, tt.wantOK)
-			}
-			if ok && got.Amount() != tt.wantAmount {
-				t.Errorf("ParseMoney(%q) amount = %d, want %d",
-					tt.input, got.Amount(), tt.wantAmount)
+			if (ok && got.Amount() != tt.wantAmount) || ok != tt.wantOK {
+				t.Errorf(
+					"ParseMoney(%q) amount = %d, want %d | ok = %v, want %v",
+					tt.input, got.Amount(), tt.wantAmount, ok, tt.wantOK,
+				)
 			}
 		})
 	}
@@ -106,6 +112,7 @@ func TestFormat(t *testing.T) {
 		money          Money
 		expectedResult string
 	}{
+		{Money{amount: int64(-1), currency: Currency("USD")}, "-0.01 USD"},
 		{Money{amount: int64(1), currency: Currency("USD")}, "0.01 USD"},
 		{Money{amount: int64(9), currency: Currency("USD")}, "0.09 USD"},
 		{Money{amount: int64(19), currency: Currency("USD")}, "0.19 USD"},
