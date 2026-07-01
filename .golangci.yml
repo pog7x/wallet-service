@@ -1,0 +1,29 @@
+version: '2'
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - errorlint # корректный error wrapping и Is/As
+    - bodyclose # незакрытые http.Response.Body
+    - noctx # http-запросы без context
+    - revive # стиль/идиоматика
+    - gocritic
+    - misspell
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable:
+        - shadow # затенение переменных — частый источник багов
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
