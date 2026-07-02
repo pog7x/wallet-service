@@ -1,4 +1,7 @@
-// Package money ...
+// Package money provides an immutable value type for monetary amounts.
+//
+// Amounts are stored as an integer number of minor units (for example cents)
+// in a fixed currency and never use floating point, so arithmetic is exact.
 package money
 
 import (
@@ -9,6 +12,9 @@ import (
 
 // Currency is an ISO-4217 currency code such as "USD", "EUR".
 type Currency string
+
+// DefaultCurrency needs for amount with zero values
+const DefaultCurrency Currency = "USD"
 
 // Money is an immutable monetary amount stored as an integer number of
 // minor units (cents) in a fixed currency. It never uses floating point.
