@@ -10,26 +10,29 @@ import (
 func TestNewLedger(t *testing.T) {
 	ld := NewLedger()
 
-	err := ld.Record("11", money.New(463, "USD"))
-	if err != nil {
-		t.Errorf("Got error %v", err)
+	if ld.entries == nil {
+		t.Error("ledger entries must be not nil map")
 	}
 }
 
 func TestRecordSuccess(t *testing.T) {
 	ld := NewLedger()
 	accID := "63546123"
-	amountOne, AmountTwo := int64(463), int64(726)
+	amountOne, amountTwo := int64(463), int64(726)
 	expectedCurr := money.Currency("EUR")
-	expectedSum := amountOne + AmountTwo
+	expectedSum := amountOne + amountTwo
 
 	err := ld.Record(accID, money.New(amountOne, expectedCurr))
 	if err != nil {
 		t.Errorf("Got error %v", err)
 	}
 
-	err = ld.Record(accID, money.New(AmountTwo, expectedCurr))
+	err = ld.Record(accID, money.New(amountTwo, expectedCurr))
 	if err != nil {
+		t.Errorf("Got error %v", err)
+	}
+
+	if ld.entries[accID][0].Seq >= ld.entries[accID][1].Seq {
 		t.Errorf("Got error %v", err)
 	}
 
@@ -55,16 +58,16 @@ func TestRecordSuccess(t *testing.T) {
 func TestRecordFailed(t *testing.T) {
 	ld := NewLedger()
 	accID := "63546123"
-	amountOne, AmountTwo := int64(463), int64(726)
+	amountOne, amountTwo := int64(463), int64(726)
 	expectedCurr := money.Currency("EUR")
-	expectedSum := amountOne + AmountTwo
+	expectedSum := amountOne + amountTwo
 
 	err := ld.Record(accID, money.New(amountOne, expectedCurr))
 	if err != nil {
 		t.Errorf("Got error %v", err)
 	}
 
-	err = ld.Record(accID, money.New(AmountTwo, expectedCurr))
+	err = ld.Record(accID, money.New(amountTwo, expectedCurr))
 	if err != nil {
 		t.Errorf("Got error %v", err)
 	}
@@ -101,7 +104,7 @@ func TestBalanceEmptyLedger(t *testing.T) {
 		t.Errorf("account amount is not equal to expected amount, %d != %d", 0, bal.Amount())
 	}
 
-	if bal.Currency() != money.DefaultCurrency {
-		t.Errorf("account currency is not equal to expected currency, %s != %s", money.DefaultCurrency, bal.Currency())
+	if bal.Currency() != "" {
+		t.Errorf("account currency is not equal to expected currency, %s != %s", "", bal.Currency())
 	}
 }

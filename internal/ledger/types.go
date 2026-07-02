@@ -8,8 +8,6 @@ package ledger
 
 import (
 	"errors"
-	"fmt"
-	"time"
 
 	"github.com/pog7x/wallet-service/internal/money"
 )
@@ -30,6 +28,7 @@ type Entry struct {
 // is not usable; create one with NewLedger.
 type Ledger struct {
 	entries map[string][]Entry
+	nextSeq int64
 }
 
 // NewLedger returns an empty ledger ready to record entries.
@@ -41,16 +40,16 @@ func NewLedger() *Ledger {
 // ErrMixedCurrency if the account already holds entries in a different
 // currency.
 func (l *Ledger) Record(accountID string, amount money.Money) error {
-	if existEntry, ok := l.entries[accountID]; ok {
-		if len(existEntry) > 0 {
-			existEntryCurrency := existEntry[0].Amount.Currency()
-			if existEntryCurrency != amount.Currency() {
-				return ErrMixedCurrency
-			}
+	if existing := l.entries[accountID]; len(existing) > 0 {
+		existEntryCurrency := existing[0].Amount.Currency()
+		if existEntryCurrency != amount.Currency() {
+			return ErrMixedCurrency
 		}
+
 	}
 
-	l.entries[accountID] = append(l.entries[accountID], Entry{AccountID: accountID, Amount: amount, Seq: time.Now().Unix()})
+	l.entries[accountID] = append(l.entries[accountID], Entry{AccountID: accountID, Amount: amount, Seq: l.nextSeq})
+	l.nextSeq++
 
 	return nil
 }
@@ -59,16 +58,17 @@ func (l *Ledger) Record(accountID string, amount money.Money) error {
 // entries has a zero balance and is not an error. It returns ErrMixedCurrency
 // if the account's entries somehow span multiple currencies.
 func (l *Ledger) Balance(accountID string) (money.Money, error) {
-	if len(l.entries[accountID]) == 0 {
-		return money.New(0, money.DefaultCurrency), nil
+	entries := l.entries[accountID]
+	if len(entries) == 0 {
+		return money.Money{}, nil
 	}
 
-	var total = money.New(0, l.entries[accountID][0].Amount.Currency())
+	var total = money.New(0, entries[0].Amount.Currency())
 	var ok bool
 
-	for _, entry := range l.entries[accountID] {
+	for _, entry := range entries {
 		if total, ok = total.Add(entry.Amount); !ok {
-			return money.Money{}, fmt.Errorf("calculating balance error account id %s", accountID)
+			return money.Money{}, ErrMixedCurrency
 		}
 	}
 
