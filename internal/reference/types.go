@@ -13,7 +13,7 @@ import (
 )
 
 // ErrInvalidReference indicates that a string is not a valid payment
-// reference: it is empty after normalizing, exceeds MaxRunes runes, or
+// reference: it is empty after trimming, exceeds MaxRunes runes, or
 // contains a control character.
 var ErrInvalidReference = errors.New("reference: invalid string")
 
@@ -33,33 +33,33 @@ func (r Reference) RuneLen() (n int) {
 	return n
 }
 
-// Parse normalizes surrounding whitespace and validates s as a payment
-// reference. It returns error == ErrInvalidReference when the normalized value is empty,
+// Parse trims surrounding whitespace and validates s as a payment
+// reference. It returns ok == false when the trimmed value is empty,
 // exceeds MaxRunes runes, or contains any control character. The length
 // limit is counted in runes, so multibyte input is not unfairly rejected.
 func Parse(s string) (Reference, error) {
+	s = strings.TrimSpace(s)
+
+	if s == "" {
+		return Reference(""), ErrInvalidReference
+	}
+
 	var b strings.Builder
 	var runeCount int
 
 	for _, r := range s {
 		if unicode.IsControl(r) {
-			return Reference(s), ErrInvalidReference
+			return Reference(""), ErrInvalidReference
 		}
-		if !unicode.IsSpace(r) {
-			b.WriteRune(unicode.ToLower(r))
-			runeCount++
-		}
+		b.WriteRune(r)
+		runeCount++
 	}
 
 	if runeCount > MaxRunes {
-		return Reference(s), ErrInvalidReference
+		return Reference(""), ErrInvalidReference
 	}
 
 	s = b.String()
-
-	if s == "" {
-		return Reference(s), ErrInvalidReference
-	}
 
 	return Reference(s), nil
 }
