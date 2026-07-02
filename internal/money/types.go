@@ -1,4 +1,7 @@
-// Package money ...
+// Package money provides an immutable value type for monetary amounts.
+//
+// Amounts are stored as an integer number of minor units (for example cents)
+// in a fixed currency and never use floating point, so arithmetic is exact.
 package money
 
 import (
