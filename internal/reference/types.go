@@ -34,9 +34,9 @@ func (r Reference) RuneLen() (n int) {
 }
 
 // Parse trims surrounding whitespace and validates s as a payment
-// reference. It returns ok == false when the trimmed value is empty,
-// exceeds MaxRunes runes, or contains any control character. The length
-// limit is counted in runes, so multibyte input is not unfairly rejected.
+// reference. It returns ErrInvalidReference when the trimmed value is empty,
+// exceeds MaxRunes runes, or contains control character inside string.
+// The length limit is counted in runes, so multibyte input is not unfairly rejected.
 func Parse(s string) (Reference, error) {
 	s = strings.TrimSpace(s)
 
@@ -44,22 +44,18 @@ func Parse(s string) (Reference, error) {
 		return Reference(""), ErrInvalidReference
 	}
 
-	var b strings.Builder
 	var runeCount int
 
 	for _, r := range s {
 		if unicode.IsControl(r) {
 			return Reference(""), ErrInvalidReference
 		}
-		b.WriteRune(r)
 		runeCount++
 	}
 
 	if runeCount > MaxRunes {
 		return Reference(""), ErrInvalidReference
 	}
-
-	s = b.String()
 
 	return Reference(s), nil
 }
