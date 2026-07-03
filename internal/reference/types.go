@@ -1,0 +1,61 @@
+// Package reference validates and normalizes human-entered payment
+// references (the "purpose of payment" field).
+//
+// Length is bounded in Unicode code points (runes), not bytes, so a
+// multibyte reference is measured by how many characters it contains
+// rather than how many bytes it occupies.
+package reference
+
+import (
+	"errors"
+	"strings"
+	"unicode"
+)
+
+// ErrInvalidReference indicates that a string is not a valid payment
+// reference: it is empty after trimming, exceeds MaxRunes runes, or
+// contains a control character.
+var ErrInvalidReference = errors.New("reference: invalid string")
+
+// Reference is a validated, normalized payment reference of at most
+// MaxRunes runes, free of control characters.
+type Reference string
+
+// MaxRunes is the maximum length of a Reference in runes (SEPA limit).
+const MaxRunes = 35
+
+// RuneLen returns the length of the reference in runes (characters),
+// which differs from len(r) for any non-ASCII content.
+func (r Reference) RuneLen() (n int) {
+	for range r {
+		n++
+	}
+	return n
+}
+
+// Parse trims surrounding whitespace and validates s as a payment
+// reference. It returns ErrInvalidReference when the trimmed value is empty,
+// exceeds MaxRunes runes, or contains control character inside string.
+// The length limit is counted in runes, so multibyte input is not unfairly rejected.
+func Parse(s string) (Reference, error) {
+	s = strings.TrimSpace(s)
+
+	if s == "" {
+		return Reference(""), ErrInvalidReference
+	}
+
+	var runeCount int
+
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return Reference(""), ErrInvalidReference
+		}
+		runeCount++
+	}
+
+	if runeCount > MaxRunes {
+		return Reference(""), ErrInvalidReference
+	}
+
+	return Reference(s), nil
+}
