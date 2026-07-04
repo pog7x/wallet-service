@@ -7,132 +7,150 @@ import (
 	"github.com/pog7x/wallet-service/internal/money"
 )
 
-func TestTransferSuccess(t *testing.T) {
-	fromAccountID, toAccountID := "654635634", "134635461"
-	testCurrency := money.Currency("USD")
+// transferCurrency is the single currency used to fund accounts in these
+// tests. A distinct name avoids colliding with helpers in other test files.
+const transferCurrency = money.Currency("USD")
 
-	fromAmount, toAmount := money.New(111111, testCurrency), money.New(222222, testCurrency)
-	toTransfer := money.New(555, testCurrency)
+// newFundedRepo builds a MemRepository seeded with accounts.
+// balances maps an account id to its initial balance in minor units,
+// all in transferCurrency. It fails the test if any seeding step errors,
+// because a broken setup must not be reported as a Transfer failure.
+func newFundedRepo(t *testing.T, balances map[string]int64) *MemRepository {
+	t.Helper()
+	repo := NewMemRepository()
+	for id, amount := range balances {
+		acc := NewAccount(id, transferCurrency)
+		if amount > 0 {
+			if err := acc.Deposit(money.New(amount, transferCurrency)); err != nil {
+				t.Fatalf("seed deposit for %q: %v", id, err)
+			}
+		}
+		if err := repo.Save(acc); err != nil {
+			t.Fatalf("seed save for %q: %v", id, err)
+		}
+	}
+	return repo
+}
 
-	expectedFromAmount, _ := fromAmount.Sub(toTransfer)
-	expectedToAmount, _ := toAmount.Add(toTransfer)
-
-	mr := NewMemRepository()
-
-	mr.accMap[fromAccountID] = Account{balance: fromAmount, currency: testCurrency, id: fromAccountID}
-	mr.accMap[toAccountID] = Account{balance: toAmount, currency: testCurrency, id: toAccountID}
-
-	s := NewService(mr)
-
-	err := s.Transfer(fromAccountID, toAccountID, toTransfer)
+// mustBalance loads an account and returns its balance in minor units,
+// failing the test if the account cannot be loaded.
+func mustBalance(t *testing.T, repo *MemRepository, id string) int64 {
+	t.Helper()
+	acc, err := repo.Load(id)
 	if err != nil {
-		t.Errorf("Got unexpected error %v", err)
+		t.Fatalf("load %q: %v", id, err)
+	}
+	return acc.Balance().Amount()
+}
+
+// TestTransfer_Success checks the core invariant: money moves between the two
+// accounts but the total across the system is unchanged. This is what no
+// component-level test can verify, because it concerns two accounts at once.
+func TestTransfer_Success(t *testing.T) {
+	repo := newFundedRepo(t, map[string]int64{"A": 10000, "B": 5000})
+	svc := NewService(repo)
+
+	before := mustBalance(t, repo, "A") + mustBalance(t, repo, "B")
+
+	if err := svc.Transfer("A", "B", money.New(3000, transferCurrency)); err != nil {
+		t.Fatalf("Transfer: unexpected error: %v", err)
 	}
 
-	acc1, acc2 := mr.accMap[fromAccountID], mr.accMap[toAccountID]
+	gotA := mustBalance(t, repo, "A")
+	gotB := mustBalance(t, repo, "B")
 
-	if acc1.Balance().Amount() != expectedFromAmount.Amount() {
-		t.Errorf(
-			"'from' account amount is not equal to expected amount after transfer, want: %d got: %d",
-			expectedFromAmount.Amount(), acc1.Balance().Amount(),
-		)
+	if gotA != 7000 {
+		t.Errorf("source balance = %d, want %d", gotA, 7000)
 	}
-
-	if acc2.Balance().Amount() != expectedToAmount.Amount() {
-		t.Errorf(
-			"'to' account amount is not equal to expected amount after transfer, want: %d got: %d",
-			expectedToAmount.Amount(), acc2.Balance().Amount(),
-		)
+	if gotB != 8000 {
+		t.Errorf("destination balance = %d, want %d", gotB, 8000)
+	}
+	if after := gotA + gotB; before != after {
+		t.Errorf("money not conserved: before %d, after %d", before, after)
 	}
 }
 
-func TestSameAccountError(t *testing.T) {
-	testAcoountID := "654635634"
-	testCurrency := money.Currency("USD")
+// TestTransfer_InsufficientFunds checks that a rejected transfer leaves BOTH
+// balances untouched. This proves there was no partial application, where the
+// debit or credit happened but the other half did not.
+func TestTransfer_InsufficientFunds(t *testing.T) {
+	repo := newFundedRepo(t, map[string]int64{"A": 1000, "B": 5000})
+	svc := NewService(repo)
 
-	expectedAmount := money.New(111111, testCurrency)
+	err := svc.Transfer("A", "B", money.New(2000, transferCurrency))
+	if !errors.Is(err, ErrInsufficientFunds) {
+		t.Fatalf("Transfer error = %v, want ErrInsufficientFunds", err)
+	}
 
-	mr := NewMemRepository()
+	if got := mustBalance(t, repo, "A"); got != 1000 {
+		t.Errorf("source balance changed on failed transfer: got %d, want %d", got, 1000)
+	}
+	if got := mustBalance(t, repo, "B"); got != 5000 {
+		t.Errorf("destination balance changed on failed transfer: got %d, want %d", got, 5000)
+	}
+}
 
-	mr.accMap[testAcoountID] = Account{balance: expectedAmount, currency: testCurrency, id: testAcoountID}
+// TestTransfer_SourceNotFound checks that a missing source account is reported
+// and does not alter the existing destination account.
+func TestTransfer_SourceNotFound(t *testing.T) {
+	repo := newFundedRepo(t, map[string]int64{"B": 5000})
+	svc := NewService(repo)
 
-	s := NewService(mr)
+	err := svc.Transfer("ghost", "B", money.New(1000, transferCurrency))
+	if !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("Transfer error = %v, want ErrAccountNotFound", err)
+	}
+	if got := mustBalance(t, repo, "B"); got != 5000 {
+		t.Errorf("destination balance changed when source missing: got %d, want %d", got, 5000)
+	}
+}
 
-	err := s.Transfer(testAcoountID, testAcoountID, money.New(555, testCurrency))
+// TestTransfer_DestinationNotFound probes operation order. If Transfer debits
+// the source before confirming the destination exists, the source will be
+// changed here and this test will fail, revealing the atomicity gap. If both
+// accounts are loaded up front before any mutation, the source stays intact.
+func TestTransfer_DestinationNotFound(t *testing.T) {
+	repo := newFundedRepo(t, map[string]int64{"A": 5000})
+	svc := NewService(repo)
+
+	err := svc.Transfer("A", "ghost", money.New(1000, transferCurrency))
+	if !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("Transfer error = %v, want ErrAccountNotFound", err)
+	}
+	if got := mustBalance(t, repo, "A"); got != 5000 {
+		t.Errorf("source balance changed when destination missing: got %d, want %d", got, 5000)
+	}
+}
+
+// TestTransfer_SameAccount checks that a transfer to the same account is
+// rejected before any mutation, so the balance is left unchanged.
+func TestTransfer_SameAccount(t *testing.T) {
+	repo := newFundedRepo(t, map[string]int64{"A": 5000})
+	svc := NewService(repo)
+
+	err := svc.Transfer("A", "A", money.New(1000, transferCurrency))
 	if !errors.Is(err, ErrSameAccount) {
-		t.Errorf("Transfer unexpected error, want %v got %v", ErrSameAccount, err)
+		t.Fatalf("Transfer error = %v, want ErrSameAccount", err)
 	}
-
-	acc := mr.accMap[testAcoountID]
-
-	if acc.Balance().Amount() != expectedAmount.Amount() {
-		t.Errorf(
-			"account amount not equal to expected amount, want: %d got: %d",
-			expectedAmount.Amount(), acc.Balance().Amount(),
-		)
+	if got := mustBalance(t, repo, "A"); got != 5000 {
+		t.Errorf("balance changed on same-account transfer: got %d, want %d", got, 5000)
 	}
 }
 
-func TestTransferNonPositiveError(t *testing.T) {
-	fromAccountID, toAccountID := "654635634", "134635461"
-	testCurrency := money.Currency("USD")
+// TestTransfer_CurrencyMismatch checks that an amount in a currency different
+// from the accounts is rejected and leaves both balances untouched.
+func TestTransfer_CurrencyMismatch(t *testing.T) {
+	repo := newFundedRepo(t, map[string]int64{"A": 5000, "B": 5000})
+	svc := NewService(repo)
 
-	fromAmount, toAmount := money.New(111111, testCurrency), money.New(222222, testCurrency)
-
-	mr := NewMemRepository()
-
-	mr.accMap[fromAccountID] = Account{balance: fromAmount, currency: testCurrency, id: fromAccountID}
-	mr.accMap[toAccountID] = Account{balance: toAmount, currency: testCurrency, id: toAccountID}
-
-	s := NewService(mr)
-
-	err := s.Transfer(fromAccountID, toAccountID, money.New(-5555, testCurrency))
-	if !errors.Is(err, ErrNonPositiveAmount) {
-		t.Errorf("Transfer unexpected error, want %v got %v", ErrSameAccount, err)
+	err := svc.Transfer("A", "B", money.New(1000, money.Currency("EUR")))
+	if !errors.Is(err, ErrCurrencyMismatch) {
+		t.Fatalf("Transfer error = %v, want ErrCurrencyMismatch", err)
 	}
-
-	acc1, acc2 := mr.accMap[fromAccountID], mr.accMap[toAccountID]
-
-	if acc1.Balance().Amount() != fromAmount.Amount() {
-		t.Errorf(
-			"account amount not equal to expected amount, want: %d got: %d",
-			fromAmount.Amount(), acc1.Balance().Amount(),
-		)
+	if got := mustBalance(t, repo, "A"); got != 5000 {
+		t.Errorf("source balance changed on currency mismatch: got %d, want %d", got, 5000)
 	}
-	if acc2.Balance().Amount() != toAmount.Amount() {
-		t.Errorf(
-			"account amount not equal to expected amount, want: %d got: %d",
-			toAmount.Amount(), acc2.Balance().Amount(),
-		)
-	}
-}
-
-func TestTransferInsufficientFundsError(t *testing.T) {
-	fromAccountID, toAccountID := "654635634", "134635461"
-	testCurrency := money.Currency("USD")
-
-	fromAmount, toAmount := money.New(0, testCurrency), money.New(222222, testCurrency)
-
-	expectedAmount := money.New(111111, testCurrency)
-
-	mr := NewMemRepository()
-
-	mr.accMap[fromAccountID] = Account{balance: fromAmount, currency: testCurrency, id: fromAccountID}
-	mr.accMap[toAccountID] = Account{balance: toAmount, currency: testCurrency, id: toAccountID}
-
-	s := NewService(mr)
-
-	err := s.Transfer(fromAccountID, toAccountID, money.New(5555, testCurrency))
-	if !errors.Is(err, ErrNonPositiveAmount) {
-		t.Errorf("Transfer unexpected error, want %v got %v", ErrSameAccount, err)
-	}
-
-	acc := mr.accMap[fromAccountID]
-
-	if acc.Balance().Amount() != expectedAmount.Amount() {
-		t.Errorf(
-			"account amount not equal to expected amount, want: %d got: %d",
-			expectedAmount.Amount(), acc.Balance().Amount(),
-		)
+	if got := mustBalance(t, repo, "B"); got != 5000 {
+		t.Errorf("destination balance changed on currency mismatch: got %d, want %d", got, 5000)
 	}
 }

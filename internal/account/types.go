@@ -19,8 +19,12 @@ var (
 	// ErrInsufficientFunds indicates that a withdrawal was rejected because it
 	// would reduce the balance below zero.
 	ErrInsufficientFunds = errors.New("account: insufficient funds")
-	ErrAccountNotFound   = errors.New("account: account not found")
-	ErrSameAccount       = errors.New("account: same source and destination account")
+	// ErrAccountNotFound indicates that no account exists for the requested
+	// identifier.
+	ErrAccountNotFound = errors.New("account: account not found")
+	// ErrSameAccount indicates that a transfer was requested with the
+	// same source and destination account and was therefore rejected.
+	ErrSameAccount = errors.New("account: same source and destination account")
 )
 
 // Account is a wallet account holding a balance in a single fixed currency.

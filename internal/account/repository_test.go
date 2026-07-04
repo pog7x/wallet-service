@@ -1,6 +1,7 @@
 package account
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/pog7x/wallet-service/internal/money"
@@ -51,12 +52,12 @@ func TestMemRepositorySaveFail(t *testing.T) {
 	}
 
 	err := mr.Save(&Account{balance: money.New(int64(734643), "EUR"), currency: "EUR", id: expectedAccountID})
-	if err != ErrCurrencyMismatch {
+	if !errors.Is(err, ErrCurrencyMismatch) {
 		t.Errorf("Save(*Account) unexpected error, want %v got %v", ErrCurrencyMismatch, err)
 	}
 
 	err = mr.Save(&Account{balance: money.New(int64(734643), "EUR"), currency: expectedCurrency, id: expectedAccountID})
-	if err != ErrCurrencyMismatch {
+	if !errors.Is(err, ErrCurrencyMismatch) {
 		t.Errorf("Save(*Account) unexpected error, want %v got %v", ErrCurrencyMismatch, err)
 	}
 
@@ -106,7 +107,7 @@ func TestMemRepositoryLoadFail(t *testing.T) {
 	mr := NewMemRepository()
 
 	_, err := mr.Load(expectedAccountID)
-	if err != ErrAccountNotFound {
+	if !errors.Is(err, ErrAccountNotFound) {
 		t.Errorf("Load(%s) unexpected error, want %v got %v", expectedAccountID, ErrAccountNotFound, err)
 	}
 }
