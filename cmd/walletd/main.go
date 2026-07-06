@@ -17,21 +17,18 @@ func run(w io.Writer) error {
 	fromAccID, toAccID := "id1", "id2"
 	fromAcc, toAcc := account.NewAccount(fromAccID, money.Currency("USD")), account.NewAccount(toAccID, money.Currency("USD"))
 
-	var err error
-
-	if err = mr.Save(fromAcc); err != nil {
+	err := fromAcc.Deposit(money.New(2555, money.Currency("USD")))
+	if err != nil {
 		return err
 	}
 
-	if err = mr.Save(toAcc); err != nil {
+	err = mr.Save(fromAcc)
+	if err != nil {
 		return err
 	}
 
-	if err = fromAcc.Deposit(money.New(2555, money.Currency("USD"))); err != nil {
-		return err
-	}
-
-	if err = mr.Save(fromAcc); err != nil {
+	err = mr.Save(toAcc)
+	if err != nil {
 		return err
 	}
 
@@ -58,6 +55,7 @@ func run(w io.Writer) error {
 
 func main() {
 	if err := run(os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
