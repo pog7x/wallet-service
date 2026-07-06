@@ -1,6 +1,8 @@
 package money
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestNew(t *testing.T) {
 	expectedAmount := int64(3476)
@@ -82,6 +84,8 @@ func TestParseMoney(t *testing.T) {
 		{"one decimal is tens", "0.5", 50, true},
 		{"no integer part, not OK", ".5", 0, false},
 		{"leading zero decimal five cents", "0.05", 5, true},
+		{"leading minus in tens", "0.-5", 0, false},
+		{"leading plus in tens", "0.+5", 0, false},
 		{"comma sep", "12,34", 0, false},
 		{"empty string", "", 0, false},
 		{"negative", "-5000", 0, false},
@@ -91,6 +95,8 @@ func TestParseMoney(t *testing.T) {
 		{"character after digits", "12.3x", 0, false},
 		{"three digits after dot", "12.999", 0, false},
 		{"colon", ":", 0, false},
+		{"big int (transform to negative)", "99999999999999999", 0, false},
+		{"big int (transform to positive)", "999999999999999999", 0, false},
 	}
 
 	for _, tt := range tests {
@@ -105,6 +111,33 @@ func TestParseMoney(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzParseMoney(f *testing.F) {
+	f.Add("12.34")              // обычный валидный случай
+	f.Add("0.5")                // обычный валидный случай
+	f.Add("0")                  // граничный: ноль
+	f.Add("")                   // граничный: пустая строка
+	f.Add("-5")                 // заведомо невалидный
+	f.Add(".5")                 // заведомо невалидный
+	f.Add(".-5")                // заведомо невалидный
+	f.Add("0.-5")               // заведомо невалидный
+	f.Add("0.+5")               // заведомо невалидный
+	f.Add(".")                  // заведомо невалидный
+	f.Add("   ")                // заведомо невалидный
+	f.Add("99999999999999999")  // заведомо проблемный: большое число
+	f.Add("999999999999999999") // заведомо проблемный: большое число
+
+	f.Fuzz(func(t *testing.T, s string) {
+		amount, ok := ParseMoney(s, Currency("USD"))
+
+		// Инвариант: успешный разбор не может дать отрицательную сумму,
+		// потому что отрицательные суммы у тебя запрещены на входе.
+		if ok && amount.Amount() < 0 {
+			t.Errorf("ParseMoney(%q) reported success but returned negative amount %d",
+				s, amount.Amount())
+		}
+	})
 }
 
 func TestFormat(t *testing.T) {

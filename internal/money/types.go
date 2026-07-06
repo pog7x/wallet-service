@@ -6,8 +6,10 @@ package money
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Currency is an ISO-4217 currency code such as "USD", "EUR".
@@ -38,10 +40,14 @@ func (m Money) Currency() Currency {
 // Add returns the sum of m and o. The bool is false when the currencies
 // differ, in which case the returned Money is not meaningful.
 func (m Money) Add(o Money) (Money, bool) {
-	// TODO: overflow
 	if m.currency != o.currency {
 		return Money{}, false
 	}
+
+	if m.amount > math.MaxInt64-o.amount {
+		return Money{}, false
+	}
+
 	return Money{amount: m.amount + o.amount, currency: m.currency}, true
 }
 
@@ -83,9 +89,14 @@ func ParseMoney(s string, currency Currency) (Money, bool) {
 		return Money{}, false
 	}
 
+	if intPart > math.MaxInt64/100 {
+		return Money{}, false
+	}
+
+	intPart *= 100
+
 	if len(split) == 1 {
-		// TODO: overflow
-		return Money{amount: intPart * 100, currency: currency}, true
+		return Money{amount: intPart, currency: currency}, true
 	}
 
 	var frac string
@@ -101,11 +112,20 @@ func ParseMoney(s string, currency Currency) (Money, bool) {
 		frac = "0"
 	}
 
+	for _, r := range frac {
+		if !unicode.IsDigit(r) {
+			return Money{}, false
+		}
+	}
+
 	fracPart, err := strconv.ParseInt(frac, 10, 64)
 	if err != nil {
 		return Money{}, false
 	}
 
-	// TODO: overflow
-	return Money{amount: intPart*100 + fracPart, currency: currency}, true
+	if intPart > math.MaxInt64-fracPart {
+		return Money{}, false
+	}
+
+	return Money{amount: intPart + fracPart, currency: currency}, true
 }
