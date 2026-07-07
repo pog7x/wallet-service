@@ -2,6 +2,7 @@ package account
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/pog7x/wallet-service/internal/money"
@@ -152,5 +153,45 @@ func TestTransfer_CurrencyMismatch(t *testing.T) {
 	}
 	if got := mustBalance(t, repo, "B"); got != 5000 {
 		t.Errorf("destination balance changed on currency mismatch: got %d, want %d", got, 5000)
+	}
+}
+
+func TestTransferConcurrent(t *testing.T) {
+	const (
+		fromAmount = 1_000_000
+		maxWorkers = 200
+		perWorker  = 100
+		amount     = 1
+	)
+
+	fromAcc := Account{balance: money.New(int64(fromAmount), "USD"), currency: "USD", id: "1"}
+	toAcc := Account{balance: money.New(0, "USD"), currency: "USD", id: "2"}
+
+	repo := MemRepository{accMap: map[string]Account{"1": fromAcc, "2": toAcc}}
+	svc := NewService(&repo)
+
+	wg := sync.WaitGroup{}
+	wg.Add(maxWorkers)
+
+	for range maxWorkers {
+		go func() {
+			defer wg.Done()
+			for range perWorker {
+				if err := svc.Transfer("1", "2", money.New(amount, "USD")); err != nil {
+					t.Errorf("unexpected transfer error: %v", err)
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	moved := int64(maxWorkers * perWorker * amount)
+	if got := repo.accMap["1"].balance.Amount(); got != fromAmount-moved {
+		t.Errorf("from balance: want %d, got %d", fromAmount-moved, got)
+	}
+	if got := repo.accMap["2"].balance.Amount(); got != moved {
+		t.Errorf("to balance: want %d, got %d", moved, got)
 	}
 }
