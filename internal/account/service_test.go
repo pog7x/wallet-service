@@ -2,6 +2,7 @@ package account
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/pog7x/wallet-service/internal/money"
@@ -152,5 +153,44 @@ func TestTransfer_CurrencyMismatch(t *testing.T) {
 	}
 	if got := mustBalance(t, repo, "B"); got != 5000 {
 		t.Errorf("destination balance changed on currency mismatch: got %d, want %d", got, 5000)
+	}
+}
+
+func TestTransferConcurrent(t *testing.T) {
+	fromAmount, toAmount := 100000, 0
+	fromAcc := Account{balance: money.New(int64(fromAmount), "USD"), currency: "USD", id: "1"}
+	toAcc := Account{balance: money.New(int64(toAmount), "USD"), currency: "USD", id: "2"}
+
+	repo := MemRepository{accMap: map[string]Account{"1": fromAcc, "2": toAcc}}
+	svc := NewService(&repo)
+
+	maxGo := 200
+
+	wg := sync.WaitGroup{}
+	wg.Add(maxGo)
+
+	counter := 0
+
+	for i := range maxGo {
+		go func(c int) {
+			defer wg.Done()
+
+			_ = svc.Transfer(fromAcc.id, toAcc.id, money.New(int64(c), "USD"))
+		}(i)
+
+		counter += i
+	}
+
+	wg.Wait()
+
+	expectedFromAmount, expectedToAmount := int64(fromAmount-counter), int64(toAmount+counter)
+	gotFromAmount, gotToAmount := repo.accMap[fromAcc.id].balance.Amount(), repo.accMap[toAcc.id].balance.Amount()
+
+	if expectedFromAmount != gotFromAmount {
+		t.Errorf("unexpected 'from' amount want: %d, got: %d", expectedFromAmount, gotFromAmount)
+	}
+
+	if expectedToAmount != gotToAmount {
+		t.Errorf("inexpected 'to' amount want: %d, got: %d", expectedToAmount, gotToAmount)
 	}
 }
