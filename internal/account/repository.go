@@ -14,7 +14,7 @@ type Repository interface {
 // MemRepository is an in-memory implementation of Repository backed by a map
 // keyed by account identifier. It is intended for tests and local development,
 // not for persistence, because its contents are lost when the process exits.
-// It is safe for concurrent use by using sync.Mutex in Save() and Load() methods.s
+// It is safe for concurrent use by multiple goroutines.
 type MemRepository struct {
 	accMap map[string]Account
 	mu     sync.Mutex
@@ -26,7 +26,7 @@ var _ Repository = (*MemRepository)(nil)
 // underlying map, because writing to a nil map panics, so the zero value of
 // MemRepository must not be used directly.
 func NewMemRepository() *MemRepository {
-	return &MemRepository{accMap: make(map[string]Account), mu: sync.Mutex{}}
+	return &MemRepository{accMap: make(map[string]Account)}
 }
 
 // Load returns a pointer to a copy of the stored account, or ErrAccountNotFound

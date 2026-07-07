@@ -154,8 +154,13 @@ func TestMemRepositoryLoadDataNotChange(t *testing.T) {
 	}
 }
 
+// TestMemRepositoryLoadAndSaveConcurrent exercises concurrent Load and Save
+// calls on a single MemRepository. It makes no assertions by design: the
+// verdict comes from the race detector, so the test must be run with -race to
+// be meaningful. Without -race the only remaining failure signal is the
+// runtime's "concurrent map read and map write" panic, which is best-effort
+// and not guaranteed on every run.
 func TestMemRepositoryLoadAndSaveConcurrent(_ *testing.T) {
-	expectedAccountID := "654635634"
 	mr := NewMemRepository()
 	maxC := 200
 
@@ -165,16 +170,17 @@ func TestMemRepositoryLoadAndSaveConcurrent(_ *testing.T) {
 	for i := range maxC {
 		go func(c int) {
 			defer wg.Done()
-			_, _ = mr.Load(expectedAccountID)
-			testAcc := NewAccount(fmt.Sprintf("%d", c), "USD")
+			testID := fmt.Sprintf("%d", c)
+			_, _ = mr.Load(testID)
+			testAcc := NewAccount(testID, "USD")
 			_ = mr.Save(testAcc)
-			_, _ = mr.Load(expectedAccountID)
+			_, _ = mr.Load(testID)
 			testAcc.balance = money.New(int64(c), "USD")
 			_ = mr.Save(testAcc)
-			_, _ = mr.Load(expectedAccountID)
+			_, _ = mr.Load(testID)
 			testAcc.balance = money.New(int64(c+30), "USD")
 			_ = mr.Save(testAcc)
-			_, _ = mr.Load(expectedAccountID)
+			_, _ = mr.Load(testID)
 		}(i)
 	}
 
