@@ -2,6 +2,8 @@ package account
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/pog7x/wallet-service/internal/money"
@@ -150,4 +152,37 @@ func TestMemRepositoryLoadDataNotChange(t *testing.T) {
 			expectedCurrency, acc.currency,
 		)
 	}
+}
+
+// TestMemRepositoryLoadAndSaveConcurrent exercises concurrent Load and Save
+// calls on a single MemRepository. It makes no assertions by design: the
+// verdict comes from the race detector, so the test must be run with -race to
+// be meaningful. Without -race the only remaining failure signal is the
+// runtime's "concurrent map read and map write" panic, which is best-effort
+// and not guaranteed on every run.
+func TestMemRepositoryLoadAndSaveConcurrent(_ *testing.T) {
+	mr := NewMemRepository()
+	maxC := 200
+
+	wg := sync.WaitGroup{}
+	wg.Add(maxC)
+
+	for i := range maxC {
+		go func(c int) {
+			defer wg.Done()
+			testID := fmt.Sprintf("%d", c)
+			_, _ = mr.Load(testID)
+			testAcc := NewAccount(testID, "USD")
+			_ = mr.Save(testAcc)
+			_, _ = mr.Load(testID)
+			testAcc.balance = money.New(int64(c), "USD")
+			_ = mr.Save(testAcc)
+			_, _ = mr.Load(testID)
+			testAcc.balance = money.New(int64(c+30), "USD")
+			_ = mr.Save(testAcc)
+			_, _ = mr.Load(testID)
+		}(i)
+	}
+
+	wg.Wait()
 }
