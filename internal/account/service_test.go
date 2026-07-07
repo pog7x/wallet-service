@@ -157,40 +157,41 @@ func TestTransfer_CurrencyMismatch(t *testing.T) {
 }
 
 func TestTransferConcurrent(t *testing.T) {
-	fromAmount, toAmount := 100000, 0
+	const (
+		fromAmount = 1_000_000
+		maxWorkers = 200
+		perWorker  = 100
+		amount     = 1
+	)
+
 	fromAcc := Account{balance: money.New(int64(fromAmount), "USD"), currency: "USD", id: "1"}
-	toAcc := Account{balance: money.New(int64(toAmount), "USD"), currency: "USD", id: "2"}
+	toAcc := Account{balance: money.New(0, "USD"), currency: "USD", id: "2"}
 
 	repo := MemRepository{accMap: map[string]Account{"1": fromAcc, "2": toAcc}}
 	svc := NewService(&repo)
 
-	maxGo := 200
-
 	wg := sync.WaitGroup{}
-	wg.Add(maxGo)
+	wg.Add(maxWorkers)
 
-	counter := 0
-
-	for i := range maxGo {
-		go func(c int) {
+	for range maxWorkers {
+		go func() {
 			defer wg.Done()
-
-			_ = svc.Transfer(fromAcc.id, toAcc.id, money.New(int64(c), "USD"))
-		}(i)
-
-		counter += i
+			for range perWorker {
+				if err := svc.Transfer("1", "2", money.New(amount, "USD")); err != nil {
+					t.Errorf("unexpected transfer error: %v", err)
+					return
+				}
+			}
+		}()
 	}
 
 	wg.Wait()
 
-	expectedFromAmount, expectedToAmount := int64(fromAmount-counter), int64(toAmount+counter)
-	gotFromAmount, gotToAmount := repo.accMap[fromAcc.id].balance.Amount(), repo.accMap[toAcc.id].balance.Amount()
-
-	if expectedFromAmount != gotFromAmount {
-		t.Errorf("unexpected 'from' amount want: %d, got: %d", expectedFromAmount, gotFromAmount)
+	moved := int64(maxWorkers * perWorker * amount)
+	if got := repo.accMap["1"].balance.Amount(); got != fromAmount-moved {
+		t.Errorf("from balance: want %d, got %d", fromAmount-moved, got)
 	}
-
-	if expectedToAmount != gotToAmount {
-		t.Errorf("inexpected 'to' amount want: %d, got: %d", expectedToAmount, gotToAmount)
+	if got := repo.accMap["2"].balance.Amount(); got != moved {
+		t.Errorf("to balance: want %d, got %d", moved, got)
 	}
 }
