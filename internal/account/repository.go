@@ -1,5 +1,7 @@
 package account
 
+import "sync"
+
 // Repository stores and retrieves accounts. It is an interface so that
 // callers depend on the abstraction rather than on a concrete storage
 // implementation, which allows the in-memory store to be replaced by a
@@ -12,9 +14,10 @@ type Repository interface {
 // MemRepository is an in-memory implementation of Repository backed by a map
 // keyed by account identifier. It is intended for tests and local development,
 // not for persistence, because its contents are lost when the process exits.
-// It is not safe for concurrent use.
+// It is safe for concurrent use by using sync.Mutex in Save() and Load() methods.s
 type MemRepository struct {
 	accMap map[string]Account
+	mu     sync.Mutex
 }
 
 var _ Repository = (*MemRepository)(nil)
@@ -23,13 +26,16 @@ var _ Repository = (*MemRepository)(nil)
 // underlying map, because writing to a nil map panics, so the zero value of
 // MemRepository must not be used directly.
 func NewMemRepository() *MemRepository {
-	return &MemRepository{accMap: make(map[string]Account)}
+	return &MemRepository{accMap: make(map[string]Account), mu: sync.Mutex{}}
 }
 
 // Load returns a pointer to a copy of the stored account, or ErrAccountNotFound
 // if it does not exist. The returned account is independent of stored state:
 // changes made through it are not persisted until it is passed to Save.
 func (mr *MemRepository) Load(id string) (*Account, error) {
+	mr.mu.Lock()
+	defer mr.mu.Unlock()
+
 	if acc, ok := mr.accMap[id]; ok {
 		return &acc, nil
 	}
@@ -44,6 +50,9 @@ func (mr *MemRepository) Save(a *Account) error {
 	if a.currency != a.balance.Currency() {
 		return ErrCurrencyMismatch
 	}
+
+	mr.mu.Lock()
+	defer mr.mu.Unlock()
 
 	if existAcc, ok := mr.accMap[a.id]; ok {
 		if existAcc.currency != a.currency {

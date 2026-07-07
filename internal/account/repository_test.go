@@ -2,6 +2,8 @@ package account
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/pog7x/wallet-service/internal/money"
@@ -150,4 +152,31 @@ func TestMemRepositoryLoadDataNotChange(t *testing.T) {
 			expectedCurrency, acc.currency,
 		)
 	}
+}
+
+func TestMemRepositoryLoadAndSaveConcurrent(_ *testing.T) {
+	expectedAccountID := "654635634"
+	mr := NewMemRepository()
+	maxC := 200
+
+	wg := sync.WaitGroup{}
+	wg.Add(maxC)
+
+	for i := range maxC {
+		go func(c int) {
+			defer wg.Done()
+			_, _ = mr.Load(expectedAccountID)
+			testAcc := NewAccount(fmt.Sprintf("%d", c), "USD")
+			_ = mr.Save(testAcc)
+			_, _ = mr.Load(expectedAccountID)
+			testAcc.balance = money.New(int64(c), "USD")
+			_ = mr.Save(testAcc)
+			_, _ = mr.Load(expectedAccountID)
+			testAcc.balance = money.New(int64(c+30), "USD")
+			_ = mr.Save(testAcc)
+			_, _ = mr.Load(expectedAccountID)
+		}(i)
+	}
+
+	wg.Wait()
 }
