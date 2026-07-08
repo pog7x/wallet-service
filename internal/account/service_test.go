@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pog7x/wallet-service/internal/money"
 )
@@ -193,5 +194,53 @@ func TestTransferConcurrent(t *testing.T) {
 	}
 	if got := repo.accMap["2"].balance.Amount(); got != moved {
 		t.Errorf("to balance: want %d, got %d", moved, got)
+	}
+}
+
+func TestTransferNoDeadlock(t *testing.T) {
+	const (
+		startBalance = 1_000_000
+		workers      = 200
+		perWorker    = 100
+		amount       = 2
+		timeout      = 5 * time.Second
+	)
+
+	accA := Account{balance: money.New(startBalance, "USD"), currency: "USD", id: "A"}
+	accB := Account{balance: money.New(startBalance, "USD"), currency: "USD", id: "B"}
+	repo := MemRepository{accMap: map[string]Account{"A": accA, "B": accB}}
+	svc := NewService(&repo)
+
+	wg := sync.WaitGroup{}
+	wg.Add(workers)
+
+	for i := range workers {
+		go func(c int) {
+			defer wg.Done()
+
+			from, to := "A", "B"
+			if c%2 == 1 {
+				from, to = "B", "A"
+			}
+
+			for range perWorker {
+				if err := svc.Transfer(from, to, money.New(amount, "USD")); err != nil {
+					t.Errorf("unexpected transfer error: %v", err)
+					return
+				}
+			}
+		}(i)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Fatal("transfers did not finish within timeout: possible deadlock")
 	}
 }

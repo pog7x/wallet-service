@@ -6,23 +6,45 @@ import (
 	"github.com/pog7x/wallet-service/internal/money"
 )
 
+type keyedMutex struct {
+	mu    sync.Mutex
+	byKey map[string]*sync.Mutex
+}
+
+func (k *keyedMutex) lockFor(key string) *sync.Mutex {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	m, ok := k.byKey[key]
+	if !ok {
+		m = &sync.Mutex{}
+		k.byKey[key] = m
+	}
+	return m
+}
+
 // Service coordinates operations across accounts using a Repository. It holds
 // the Repository as an interface, not a concrete type, so that the storage
 // implementation can change without affecting Service.
 type Service struct {
 	repo Repository
-	mu   sync.Mutex
+	kMu  keyedMutex
 }
 
 // NewService returns a Service that uses repo for account storage.
 func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+	return &Service{repo: repo, kMu: keyedMutex{byKey: make(map[string]*sync.Mutex)}}
 }
 
 // Transfer moves amount from the source account to the destination account.
-// It is safe for concurrent use: a package-level mutex serializes every
-// Transfer on this Service, so no two transfers interleave and the read-modify-
-// write sequence on each account is isolated from other transfers.
+// It is safe for concurrent use. Transfer locks both the source and the
+// destination account for the whole read-modify-write sequence, so no other
+// transfer touching either account can interleave with it. Transfers that
+// share no account run in parallel, because each account has its own lock.
+//
+// Deadlock is prevented by always acquiring the two account locks in a fixed
+// global order determined by comparing the account IDs, so two transfers in
+// opposite directions cannot form a cycle.
 //
 // This isolation only covers changes made through this Service. Modifications
 // applied directly to the repository, bypassing Transfer, are not protected.
@@ -36,8 +58,18 @@ func (s *Service) Transfer(fromID, toID string, amount money.Money) error {
 		return ErrSameAccount
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	first, second := fromID, toID
+	if first > second {
+		first, second = second, first
+	}
+
+	m1 := s.kMu.lockFor(first)
+	m1.Lock()
+	defer m1.Unlock()
+
+	m2 := s.kMu.lockFor(second)
+	m2.Lock()
+	defer m2.Unlock()
 
 	fromAcc, err := s.repo.Load(fromID)
 	if err != nil {
