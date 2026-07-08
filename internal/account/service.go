@@ -37,9 +37,14 @@ func NewService(repo Repository) *Service {
 }
 
 // Transfer moves amount from the source account to the destination account.
-// It is safe for concurrent use: a package-level mutex serializes every
-// Transfer on this Service, so no two transfers interleave and the read-modify-
-// write sequence on each account is isolated from other transfers.
+// It is safe for concurrent use. Transfer locks both the source and the
+// destination account for the whole read-modify-write sequence, so no other
+// transfer touching either account can interleave with it. Transfers that
+// share no account run in parallel, because each account has its own lock.
+//
+// Deadlock is prevented by always acquiring the two account locks in a fixed
+// global order determined by comparing the account IDs, so two transfers in
+// opposite directions cannot form a cycle.
 //
 // This isolation only covers changes made through this Service. Modifications
 // applied directly to the repository, bypassing Transfer, are not protected.
