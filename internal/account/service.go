@@ -6,17 +6,34 @@ import (
 	"github.com/pog7x/wallet-service/internal/money"
 )
 
+type keyedMutex struct {
+	mu    sync.Mutex
+	byKey map[string]*sync.Mutex
+}
+
+func (k *keyedMutex) lockFor(key string) *sync.Mutex {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	m, ok := k.byKey[key]
+	if !ok {
+		m = &sync.Mutex{}
+		k.byKey[key] = m
+	}
+	return m
+}
+
 // Service coordinates operations across accounts using a Repository. It holds
 // the Repository as an interface, not a concrete type, so that the storage
 // implementation can change without affecting Service.
 type Service struct {
 	repo Repository
-	mu   sync.Mutex
+	kMu  keyedMutex
 }
 
 // NewService returns a Service that uses repo for account storage.
 func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+	return &Service{repo: repo, kMu: keyedMutex{byKey: make(map[string]*sync.Mutex)}}
 }
 
 // Transfer moves amount from the source account to the destination account.
@@ -36,8 +53,18 @@ func (s *Service) Transfer(fromID, toID string, amount money.Money) error {
 		return ErrSameAccount
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	first, second := fromID, toID
+	if first > second {
+		first, second = second, first
+	}
+
+	m1 := s.kMu.lockFor(first)
+	m1.Lock()
+	defer m1.Unlock()
+
+	m2 := s.kMu.lockFor(second)
+	m2.Lock()
+	defer m2.Unlock()
 
 	fromAcc, err := s.repo.Load(fromID)
 	if err != nil {
