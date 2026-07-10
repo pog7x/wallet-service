@@ -1,6 +1,7 @@
 package account
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -27,7 +28,7 @@ func newFundedRepo(t *testing.T, balances map[string]int64) *MemRepository {
 				t.Fatalf("seed deposit for %q: %v", id, err)
 			}
 		}
-		if err := repo.Save(acc); err != nil {
+		if err := repo.Save(t.Context(), acc); err != nil {
 			t.Fatalf("seed save for %q: %v", id, err)
 		}
 	}
@@ -38,7 +39,7 @@ func newFundedRepo(t *testing.T, balances map[string]int64) *MemRepository {
 // failing the test if the account cannot be loaded.
 func mustBalance(t *testing.T, repo *MemRepository, id string) int64 {
 	t.Helper()
-	acc, err := repo.Load(id)
+	acc, err := repo.Load(t.Context(), id)
 	if err != nil {
 		t.Fatalf("load %q: %v", id, err)
 	}
@@ -54,7 +55,7 @@ func TestTransfer_Success(t *testing.T) {
 
 	before := mustBalance(t, repo, "A") + mustBalance(t, repo, "B")
 
-	if err := svc.Transfer("A", "B", money.New(3000, transferCurrency)); err != nil {
+	if err := svc.Transfer(t.Context(), "A", "B", money.New(3000, transferCurrency)); err != nil {
 		t.Fatalf("Transfer: unexpected error: %v", err)
 	}
 
@@ -79,7 +80,7 @@ func TestTransfer_InsufficientFunds(t *testing.T) {
 	repo := newFundedRepo(t, map[string]int64{"A": 1000, "B": 5000})
 	svc := NewService(repo)
 
-	err := svc.Transfer("A", "B", money.New(2000, transferCurrency))
+	err := svc.Transfer(t.Context(), "A", "B", money.New(2000, transferCurrency))
 	if !errors.Is(err, ErrInsufficientFunds) {
 		t.Fatalf("Transfer error = %v, want ErrInsufficientFunds", err)
 	}
@@ -98,7 +99,7 @@ func TestTransfer_SourceNotFound(t *testing.T) {
 	repo := newFundedRepo(t, map[string]int64{"B": 5000})
 	svc := NewService(repo)
 
-	err := svc.Transfer("ghost", "B", money.New(1000, transferCurrency))
+	err := svc.Transfer(t.Context(), "ghost", "B", money.New(1000, transferCurrency))
 	if !errors.Is(err, ErrAccountNotFound) {
 		t.Fatalf("Transfer error = %v, want ErrAccountNotFound", err)
 	}
@@ -115,7 +116,7 @@ func TestTransfer_DestinationNotFound(t *testing.T) {
 	repo := newFundedRepo(t, map[string]int64{"A": 5000})
 	svc := NewService(repo)
 
-	err := svc.Transfer("A", "ghost", money.New(1000, transferCurrency))
+	err := svc.Transfer(t.Context(), "A", "ghost", money.New(1000, transferCurrency))
 	if !errors.Is(err, ErrAccountNotFound) {
 		t.Fatalf("Transfer error = %v, want ErrAccountNotFound", err)
 	}
@@ -130,7 +131,7 @@ func TestTransfer_SameAccount(t *testing.T) {
 	repo := newFundedRepo(t, map[string]int64{"A": 5000})
 	svc := NewService(repo)
 
-	err := svc.Transfer("A", "A", money.New(1000, transferCurrency))
+	err := svc.Transfer(t.Context(), "A", "A", money.New(1000, transferCurrency))
 	if !errors.Is(err, ErrSameAccount) {
 		t.Fatalf("Transfer error = %v, want ErrSameAccount", err)
 	}
@@ -145,7 +146,7 @@ func TestTransfer_CurrencyMismatch(t *testing.T) {
 	repo := newFundedRepo(t, map[string]int64{"A": 5000, "B": 5000})
 	svc := NewService(repo)
 
-	err := svc.Transfer("A", "B", money.New(1000, money.Currency("EUR")))
+	err := svc.Transfer(t.Context(), "A", "B", money.New(1000, money.Currency("EUR")))
 	if !errors.Is(err, ErrCurrencyMismatch) {
 		t.Fatalf("Transfer error = %v, want ErrCurrencyMismatch", err)
 	}
@@ -165,11 +166,8 @@ func TestTransferConcurrent(t *testing.T) {
 		amount     = 1
 	)
 
-	fromAcc := Account{balance: money.New(int64(fromAmount), "USD"), currency: "USD", id: "1"}
-	toAcc := Account{balance: money.New(0, "USD"), currency: "USD", id: "2"}
-
-	repo := MemRepository{accMap: map[string]Account{"1": fromAcc, "2": toAcc}}
-	svc := NewService(&repo)
+	repo := newFundedRepo(t, map[string]int64{"A": fromAmount, "B": 0})
+	svc := NewService(repo)
 
 	wg := sync.WaitGroup{}
 	wg.Add(maxWorkers)
@@ -178,7 +176,7 @@ func TestTransferConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range perWorker {
-				if err := svc.Transfer("1", "2", money.New(amount, "USD")); err != nil {
+				if err := svc.Transfer(t.Context(), "A", "B", money.New(amount, transferCurrency)); err != nil {
 					t.Errorf("unexpected transfer error: %v", err)
 					return
 				}
@@ -189,10 +187,10 @@ func TestTransferConcurrent(t *testing.T) {
 	wg.Wait()
 
 	moved := int64(maxWorkers * perWorker * amount)
-	if got := repo.accMap["1"].balance.Amount(); got != fromAmount-moved {
+	if got := repo.accMap["A"].balance.Amount(); got != fromAmount-moved {
 		t.Errorf("from balance: want %d, got %d", fromAmount-moved, got)
 	}
-	if got := repo.accMap["2"].balance.Amount(); got != moved {
+	if got := repo.accMap["B"].balance.Amount(); got != moved {
 		t.Errorf("to balance: want %d, got %d", moved, got)
 	}
 }
@@ -206,10 +204,8 @@ func TestTransferNoDeadlock(t *testing.T) {
 		timeout      = 5 * time.Second
 	)
 
-	accA := Account{balance: money.New(startBalance, "USD"), currency: "USD", id: "A"}
-	accB := Account{balance: money.New(startBalance, "USD"), currency: "USD", id: "B"}
-	repo := MemRepository{accMap: map[string]Account{"A": accA, "B": accB}}
-	svc := NewService(&repo)
+	repo := newFundedRepo(t, map[string]int64{"A": startBalance, "B": startBalance})
+	svc := NewService(repo)
 
 	wg := sync.WaitGroup{}
 	wg.Add(workers)
@@ -224,7 +220,7 @@ func TestTransferNoDeadlock(t *testing.T) {
 			}
 
 			for range perWorker {
-				if err := svc.Transfer(from, to, money.New(amount, "USD")); err != nil {
+				if err := svc.Transfer(t.Context(), from, to, money.New(amount, transferCurrency)); err != nil {
 					t.Errorf("unexpected transfer error: %v", err)
 					return
 				}
@@ -242,5 +238,65 @@ func TestTransferNoDeadlock(t *testing.T) {
 	case <-done:
 	case <-time.After(timeout):
 		t.Fatal("transfers did not finish within timeout: possible deadlock")
+	}
+}
+
+// TestTransfer_ContextCancelled checks the cancellation contract: when ctx is
+// already cancelled before the call, Transfer returns ctx.Err() and leaves both
+// balances unchanged. Asserting the balances, not just the error, is what proves
+// no partial mutation happened, because an error return alone does not rule out
+// a debit that was applied before the failure.
+func TestTransfer_ContextCancelled(t *testing.T) {
+	const (
+		fromID   = "A"
+		toID     = "B"
+		fromInit = int64(5000)
+		toInit   = int64(1000)
+		amount   = int64(3000)
+	)
+
+	tests := []struct {
+		name    string
+		makeCtx func() (context.Context, context.CancelFunc)
+		wantErr error
+	}{
+		{
+			name: "already cancelled",
+			makeCtx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, cancel
+			},
+			wantErr: context.Canceled,
+		},
+		{
+			name: "deadline already passed",
+			makeCtx: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
+			},
+			wantErr: context.DeadlineExceeded,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFundedRepo(t, map[string]int64{fromID: fromInit, toID: toInit})
+			svc := NewService(repo)
+
+			ctx, cancel := tt.makeCtx()
+			defer cancel()
+
+			err := svc.Transfer(ctx, fromID, toID, money.New(amount, transferCurrency))
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Transfer error = %v, want errors.Is(err, %v)", err, tt.wantErr)
+			}
+
+			if got := mustBalance(t, repo, fromID); got != fromInit {
+				t.Errorf("source balance = %d, want unchanged %d", got, fromInit)
+			}
+			if got := mustBalance(t, repo, toID); got != toInit {
+				t.Errorf("destination balance = %d, want unchanged %d", got, toInit)
+			}
+		})
 	}
 }

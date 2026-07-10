@@ -28,7 +28,7 @@ func TestMemRepositorySaveSuccess(t *testing.T) {
 		id:       expectedAccountID,
 	}
 
-	err := mr.Save(&Account{balance: expectedAmount, currency: expectedCurrency, id: expectedAccountID})
+	err := mr.Save(t.Context(), &Account{balance: expectedAmount, currency: expectedCurrency, id: expectedAccountID})
 	if err != nil {
 		t.Errorf("Save(*Account) unexpected error %v", err)
 	}
@@ -43,6 +43,7 @@ func TestMemRepositorySaveSuccess(t *testing.T) {
 }
 
 func TestMemRepositorySaveFail(t *testing.T) {
+	ctx := t.Context()
 	expectedAccountID, expectedCurrency := "654635634", money.Currency("USD")
 	expectedAmount := money.New(int64(0), expectedCurrency)
 
@@ -53,12 +54,12 @@ func TestMemRepositorySaveFail(t *testing.T) {
 		id:       expectedAccountID,
 	}
 
-	err := mr.Save(&Account{balance: money.New(int64(734643), "EUR"), currency: "EUR", id: expectedAccountID})
+	err := mr.Save(ctx, &Account{balance: money.New(int64(734643), "EUR"), currency: "EUR", id: expectedAccountID})
 	if !errors.Is(err, ErrCurrencyMismatch) {
 		t.Errorf("Save(*Account) unexpected error, want %v got %v", ErrCurrencyMismatch, err)
 	}
 
-	err = mr.Save(&Account{balance: money.New(int64(734643), "EUR"), currency: expectedCurrency, id: expectedAccountID})
+	err = mr.Save(ctx, &Account{balance: money.New(int64(734643), "EUR"), currency: expectedCurrency, id: expectedAccountID})
 	if !errors.Is(err, ErrCurrencyMismatch) {
 		t.Errorf("Save(*Account) unexpected error, want %v got %v", ErrCurrencyMismatch, err)
 	}
@@ -79,7 +80,7 @@ func TestMemRepositoryLoadSuccess(t *testing.T) {
 
 	mr.accMap[expectedAccountID] = Account{balance: expectedAmount, currency: expectedCurrency, id: expectedAccountID}
 
-	acc, err := mr.Load(expectedAccountID)
+	acc, err := mr.Load(t.Context(), expectedAccountID)
 	if err != nil {
 		t.Errorf("Got unexpected error %v", err)
 	}
@@ -108,20 +109,21 @@ func TestMemRepositoryLoadFail(t *testing.T) {
 	expectedAccountID := "654635634"
 	mr := NewMemRepository()
 
-	_, err := mr.Load(expectedAccountID)
+	_, err := mr.Load(t.Context(), expectedAccountID)
 	if !errors.Is(err, ErrAccountNotFound) {
 		t.Errorf("Load(%s) unexpected error, want %v got %v", expectedAccountID, ErrAccountNotFound, err)
 	}
 }
 
 func TestMemRepositoryLoadDataNotChange(t *testing.T) {
+	ctx := t.Context()
 	expectedAccountID, expectedCurrency := "654635634", money.Currency("USD")
 	expectedAmount := money.New(int64(734643), expectedCurrency)
 	mr := NewMemRepository()
 
 	mr.accMap[expectedAccountID] = Account{balance: expectedAmount, currency: expectedCurrency, id: expectedAccountID}
 
-	acc, err := mr.Load(expectedAccountID)
+	acc, err := mr.Load(ctx, expectedAccountID)
 	if err != nil {
 		t.Errorf("Got unexpected error %v", err)
 	}
@@ -130,7 +132,7 @@ func TestMemRepositoryLoadDataNotChange(t *testing.T) {
 	acc.currency = money.Currency("EUR")
 	acc.id = "changed id"
 
-	acc, err = mr.Load(expectedAccountID)
+	acc, err = mr.Load(ctx, expectedAccountID)
 	if err != nil {
 		t.Errorf("Got unexpected error %v", err)
 	}
@@ -160,7 +162,8 @@ func TestMemRepositoryLoadDataNotChange(t *testing.T) {
 // be meaningful. Without -race the only remaining failure signal is the
 // runtime's "concurrent map read and map write" panic, which is best-effort
 // and not guaranteed on every run.
-func TestMemRepositoryLoadAndSaveConcurrent(_ *testing.T) {
+func TestMemRepositoryLoadAndSaveConcurrent(t *testing.T) {
+	ctx := t.Context()
 	mr := NewMemRepository()
 	maxC := 200
 
@@ -171,16 +174,16 @@ func TestMemRepositoryLoadAndSaveConcurrent(_ *testing.T) {
 		go func(c int) {
 			defer wg.Done()
 			testID := fmt.Sprintf("%d", c)
-			_, _ = mr.Load(testID)
+			_, _ = mr.Load(ctx, testID)
 			testAcc := NewAccount(testID, "USD")
-			_ = mr.Save(testAcc)
-			_, _ = mr.Load(testID)
+			_ = mr.Save(ctx, testAcc)
+			_, _ = mr.Load(ctx, testID)
 			testAcc.balance = money.New(int64(c), "USD")
-			_ = mr.Save(testAcc)
-			_, _ = mr.Load(testID)
+			_ = mr.Save(ctx, testAcc)
+			_, _ = mr.Load(ctx, testID)
 			testAcc.balance = money.New(int64(c+30), "USD")
-			_ = mr.Save(testAcc)
-			_, _ = mr.Load(testID)
+			_ = mr.Save(ctx, testAcc)
+			_, _ = mr.Load(ctx, testID)
 		}(i)
 	}
 
