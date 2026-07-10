@@ -1,6 +1,7 @@
 package account
 
 import (
+	"context"
 	"sync"
 
 	"github.com/pog7x/wallet-service/internal/money"
@@ -42,6 +43,11 @@ func NewService(repo Repository) *Service {
 // transfer touching either account can interleave with it. Transfers that
 // share no account run in parallel, because each account has its own lock.
 //
+// Transfer respects ctx. If ctx is already cancelled when the call begins,
+// Transfer returns ctx.Err() (context.Canceled or context.DeadlineExceeded)
+// before acquiring any account lock or touching any balance, so a cancelled
+// call leaves both accounts unchanged.
+//
 // Deadlock is prevented by always acquiring the two account locks in a fixed
 // global order determined by comparing the account IDs, so two transfers in
 // opposite directions cannot form a cycle.
@@ -53,9 +59,13 @@ func NewService(repo Repository) *Service {
 // and the second fails, the source is debited without crediting the
 // destination. Restoring that guarantee requires transactional storage and is
 // deferred to the database layer.
-func (s *Service) Transfer(fromID, toID string, amount money.Money) error {
+func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount money.Money) error {
 	if fromID == toID {
 		return ErrSameAccount
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	first, second := fromID, toID
@@ -71,12 +81,12 @@ func (s *Service) Transfer(fromID, toID string, amount money.Money) error {
 	m2.Lock()
 	defer m2.Unlock()
 
-	fromAcc, err := s.repo.Load(fromID)
+	fromAcc, err := s.repo.Load(ctx, fromID)
 	if err != nil {
 		return err
 	}
 
-	toAcc, err := s.repo.Load(toID)
+	toAcc, err := s.repo.Load(ctx, toID)
 	if err != nil {
 		return err
 	}
@@ -90,11 +100,11 @@ func (s *Service) Transfer(fromID, toID string, amount money.Money) error {
 	}
 
 	// TODO: atomic problem
-	if err = s.repo.Save(fromAcc); err != nil {
+	if err = s.repo.Save(ctx, fromAcc); err != nil {
 		return err
 	}
 
-	if err = s.repo.Save(toAcc); err != nil {
+	if err = s.repo.Save(ctx, toAcc); err != nil {
 		return err
 	}
 

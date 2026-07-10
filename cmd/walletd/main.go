@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 )
 
 func run(w io.Writer) error {
+	ctx := context.Background()
 	mr := account.NewMemRepository()
 	s := account.NewService(mr)
 
@@ -22,27 +24,27 @@ func run(w io.Writer) error {
 		return err
 	}
 
-	err = mr.Save(fromAcc)
+	err = mr.Save(ctx, fromAcc)
 	if err != nil {
 		return err
 	}
 
-	err = mr.Save(toAcc)
+	err = mr.Save(ctx, toAcc)
 	if err != nil {
 		return err
 	}
 
-	err = s.Transfer(fromAccID, toAccID, money.New(555, money.Currency("USD")))
+	err = s.Transfer(ctx, fromAccID, toAccID, money.New(555, money.Currency("USD")))
 	if err != nil {
 		return err
 	}
 
-	fromAcc, err = mr.Load(fromAccID)
+	fromAcc, err = mr.Load(ctx, fromAccID)
 	if err != nil {
 		return err
 	}
 
-	toAcc, err = mr.Load(toAccID)
+	toAcc, err = mr.Load(ctx, toAccID)
 	if err != nil {
 		return err
 	}
