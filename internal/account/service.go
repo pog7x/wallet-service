@@ -7,18 +7,65 @@ import (
 	"github.com/pog7x/wallet-service/internal/money"
 )
 
-type keyedMutex struct {
-	mu    sync.Mutex
-	byKey map[string]*sync.Mutex
+// chanMutex is a mutual-exclusion lock whose acquisition can be cancelled
+// through a context. It is a channel with a one-slot buffer: the single slot
+// holds the lock, so at most one goroutine can be inside the critical section
+// at a time. Unlike sync.Mutex, a goroutine waiting to acquire it can be
+// released by context cancellation instead of blocking unconditionally.
+//
+// The zero value is not usable; construct a chanMutex with newChanMutex.
+// A chanMutex must not be copied after first use in a way that creates an
+// independent lock, but assigning the channel value shares the same lock,
+// which is why the registry can store it by value.
+type chanMutex chan struct{}
+
+// newChanMutex returns a chanMutex ready to be acquired. The returned lock is
+// initially free, because its one-slot buffer starts empty.
+func newChanMutex() chanMutex {
+	return make(chanMutex, 1)
 }
 
-func (k *keyedMutex) lockFor(key string) *sync.Mutex {
+// Lock acquires the lock, blocking until the slot is free or ctx is cancelled.
+// It returns nil once the lock is held. If ctx is cancelled before the lock is
+// acquired, Lock returns ctx.Err() and does not acquire the lock, so the caller
+// must not release it in that case. A successful Lock must be paired with
+// exactly one Unlock.
+func (cm chanMutex) Lock(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case cm <- struct{}{}:
+		return nil
+	}
+}
+
+// Unlock releases the lock so that a waiting Lock can acquire it. Unlock must
+// be called only after a Lock that returned nil, and exactly once per such
+// Lock. Calling Unlock without holding the lock breaks mutual exclusion or
+// blocks forever, because it removes a slot that this goroutine did not fill.
+func (cm chanMutex) Unlock() {
+	<-cm
+}
+
+type keyedMutex struct {
+	mu    sync.Mutex
+	byKey map[string]chanMutex
+}
+
+// lockFor returns the chanMutex associated with key, creating it on first use
+// and returning the same lock for the same key afterwards. Returning the same
+// lock is what makes two goroutines using the same key exclude each other; a
+// fresh lock each time would leave them unsynchronised. The registry's own
+// mutex is held only for the duration of this method and is released before any
+// account lock is taken, so it is a leaf lock and cannot take part in a
+// deadlock cycle.
+func (k *keyedMutex) lockFor(key string) chanMutex {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
 	m, ok := k.byKey[key]
 	if !ok {
-		m = &sync.Mutex{}
+		m = newChanMutex()
 		k.byKey[key] = m
 	}
 	return m
@@ -34,7 +81,7 @@ type Service struct {
 
 // NewService returns a Service that uses repo for account storage.
 func NewService(repo Repository) *Service {
-	return &Service{repo: repo, kMu: keyedMutex{byKey: make(map[string]*sync.Mutex)}}
+	return &Service{repo: repo, kMu: keyedMutex{byKey: make(map[string]chanMutex)}}
 }
 
 // Transfer moves amount from the source account to the destination account.
@@ -43,10 +90,11 @@ func NewService(repo Repository) *Service {
 // transfer touching either account can interleave with it. Transfers that
 // share no account run in parallel, because each account has its own lock.
 //
-// Transfer respects ctx. If ctx is already cancelled when the call begins,
-// Transfer returns ctx.Err() (context.Canceled or context.DeadlineExceeded)
-// before acquiring any account lock or touching any balance, so a cancelled
-// call leaves both accounts unchanged.
+// Transfer respects ctx during the whole acquisition phase. If ctx is already
+// cancelled when the call begins, or if it is cancelled while Transfer is
+// waiting to acquire either account lock, Transfer returns ctx.Err() without
+// modifying either balance. A lock already acquired at that point is released
+// before returning, so a cancelled Transfer leaves no lock held.
 //
 // Deadlock is prevented by always acquiring the two account locks in a fixed
 // global order determined by comparing the account IDs, so two transfers in
@@ -74,11 +122,15 @@ func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount mone
 	}
 
 	m1 := s.kMu.lockFor(first)
-	m1.Lock()
+	if err := m1.Lock(ctx); err != nil {
+		return err
+	}
 	defer m1.Unlock()
 
 	m2 := s.kMu.lockFor(second)
-	m2.Lock()
+	if err := m2.Lock(ctx); err != nil {
+		return err
+	}
 	defer m2.Unlock()
 
 	fromAcc, err := s.repo.Load(ctx, fromID)
