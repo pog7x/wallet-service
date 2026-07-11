@@ -162,3 +162,54 @@ func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount mone
 
 	return nil
 }
+
+// BatchRequest describes a single transfer within a batch: move Amount from
+// the account identified by From to the account identified by To.
+type BatchRequest struct {
+	From   string
+	To     string
+	Amount money.Money
+}
+
+// TransferBatch executes reqs concurrently and returns a slice of errors
+// aligned with reqs by index: results[i] reports the outcome of reqs[i] and is
+// nil when that transfer succeeded. Each request runs as an independent
+// Transfer, so the failure of one request does not affect the others, and the
+// batch is not atomic across requests.
+//
+// At most concurrency transfers run at the same time; a value below 1 is
+// treated as 1. Bounding parallelism prevents an arbitrarily large input from
+// starting an unbounded number of goroutines and exhausting resources such as
+// storage connections.
+//
+// TransferBatch respects ctx. If ctx is cancelled, requests not yet started
+// receive ctx.Err() without running, and requests already started observe the
+// cancellation through the Transfer they invoke. A cancelled batch leaves the
+// accounts of unstarted requests unchanged.
+func (s *Service) TransferBatch(ctx context.Context, reqs []BatchRequest, concurrency int) []error {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
+	results := make([]error, len(reqs))
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for i, req := range reqs {
+		// Занять слот семафора или прекратить запуск, если контекст отменён.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			results[i] = ctx.Err()
+			continue
+		}
+
+		wg.Go(func() {
+			defer func() { <-sem }() // освободить слот в любом случае
+			results[i] = s.Transfer(ctx, req.From, req.To, req.Amount)
+		})
+	}
+
+	wg.Wait()
+	return results
+}
