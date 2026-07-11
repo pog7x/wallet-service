@@ -300,3 +300,43 @@ func TestTransfer_ContextCancelled(t *testing.T) {
 		})
 	}
 }
+
+func TestTransfer_CancelWhileWaitingForLock(t *testing.T) {
+	repo := newFundedRepo(t, map[string]int64{"A": 5000, "B": 1000})
+	svc := NewService(repo)
+
+	// Захватываем блокировку счёта A, чтобы Transfer, которому нужен A, ждал её.
+	held := svc.kMu.lockFor("A")
+	if err := held.Lock(context.Background()); err != nil {
+		t.Fatalf("pre-acquire lock: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- svc.Transfer(ctx, "A", "B", money.New(3000, transferCurrency))
+	}()
+
+	// Отменяем контекст: пока A удерживается, Transfer может выйти только по отмене.
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Transfer error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Transfer не вернулся после отмены: захват блокировки не отменяем")
+	}
+
+	held.Unlock()
+
+	if got := mustBalance(t, repo, "A"); got != 5000 {
+		t.Errorf("A balance = %d, want unchanged 5000", got)
+	}
+	if got := mustBalance(t, repo, "B"); got != 1000 {
+		t.Errorf("B balance = %d, want unchanged 1000", got)
+	}
+}
