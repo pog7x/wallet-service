@@ -99,6 +99,16 @@ func decodeErrorResponse(t *testing.T, rec *httptest.ResponseRecorder) ErrorResp
 	return resp
 }
 
+func TestNewHandler_NilServicePanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("NewHandler(nil) did not panic: a missing dependency must fail at wiring time")
+		}
+	}()
+
+	NewHandler(nil, testBatchLimit)
+}
+
 func TestTransferBatchHandler_Success(t *testing.T) {
 	svc := &fakeService{}
 	h := NewHandler(svc, testBatchLimit)
@@ -109,7 +119,7 @@ func TestTransferBatchHandler_Success(t *testing.T) {
 	]}`)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+		t.Fatalf("want status %d and no error, got %d", http.StatusOK, rec.Code)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", got)
@@ -169,6 +179,8 @@ func TestTransferBatchHandler_BadRequest(t *testing.T) {
 		{"empty from", `{"batch":[{"from":"","to":"b","amount":10,"currency":"USD"}]}`, "invalid_entry"},
 		{"empty to", `{"batch":[{"from":"a","to":"","amount":10,"currency":"USD"}]}`, "invalid_entry"},
 		{"empty currency", `{"batch":[{"from":"a","to":"b","amount":10,"currency":""}]}`, "invalid_entry"},
+		{"unknown field in body", `{"batch":[],"limit":5}`, "invalid_body"},
+		{"unknown field in entry", `{"batch":[{"from":"a","to":"b","amount":10,"currency":"USD","fee":1}]}`, "invalid_body"},
 	}
 
 	for _, tt := range tests {
@@ -298,6 +310,26 @@ func TestTransferBatchHandler_PropagatesCancellation(t *testing.T) {
 	}
 }
 
+func TestTransferBatchHandler_TooManyEntries(t *testing.T) {
+	svc := &fakeService{}
+	h := NewHandler(svc, testBatchLimit)
+
+	entries := make([]string, maxBatchEntries+1)
+	for i := range entries {
+		entries[i] = `{"from":"a","to":"b","amount":1,"currency":"USD"}`
+	}
+	body := fmt.Sprintf(`{"batch":[%s]}`, strings.Join(entries, ","))
+
+	rec := doTransferBatchRequest(t, h, body)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if svc.called != 0 {
+		t.Errorf("service was called %d times, want 0", svc.called)
+	}
+}
+
 func TestMappingFor(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -357,6 +389,20 @@ func TestErrorMappingsAreUnique(t *testing.T) {
 	}
 }
 
+// TestMappingFor_NilPanics fixes the contract of mappingFor: a nil error has no
+// HTTP representation. Without this test the contract is only a comment, and a
+// caller that consults mappingFor before checking for success would silently
+// turn a successful operation into a 500 response.
+func TestMappingFor_NilPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("mappingFor(nil) did not panic: success must be handled before the mapping is consulted")
+		}
+	}()
+
+	mappingFor(nil)
+}
+
 func TestTransferHandler_Success(t *testing.T) {
 	h := NewHandler(&fakeService{}, testBatchLimit)
 
@@ -364,6 +410,9 @@ func TestTransferHandler_Success(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d: a successful transfer must not be reported as an error", rec.Code, http.StatusNoContent)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("response body = %q, want empty: 204 No Content must carry no body", rec.Body.String())
 	}
 }
 
@@ -438,6 +487,7 @@ func TestTransferHandler_ErrorMapping(t *testing.T) {
 		{"non positive amount", account.ErrNonPositiveAmount, http.StatusBadRequest, "non_positive_amount"},
 		{"wrapped insufficient funds", fmt.Errorf("transfer: %w", account.ErrInsufficientFunds), http.StatusConflict, "insufficient_funds"},
 		{"unknown error", errors.New("boom"), http.StatusInternalServerError, "internal"},
+		{"canceled is not exposed as 499", context.Canceled, http.StatusInternalServerError, "canceled"},
 	}
 
 	for _, tt := range tests {
@@ -506,12 +556,63 @@ func TestTransferHandler_PropagatesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/transfers",
-		strings.NewReader(`{"from":"a","to":"b","amount":10,"currency":"USD"}`)).WithContext(ctx)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/transfers",
+		strings.NewReader(`{"from":"a","to":"b","amount":10,"currency":"USD"}`))
 
 	h.TransferHandler(httptest.NewRecorder(), req)
 
 	if svc.transferCtx == nil || svc.transferCtx.Err() == nil {
 		t.Error("service received a context that is not cancelled: cancellation must propagate from the request")
+	}
+}
+
+func TestTransferHandler_BodyTooLarge(t *testing.T) {
+	svc := &fakeService{}
+	h := NewHandler(svc, testBatchLimit)
+
+	padding := strings.Repeat("x", int(maxTransferBodyBytes)+1)
+	body := fmt.Sprintf(`{"from":"%s","to":"b","amount":10,"currency":"USD"}`, padding)
+
+	rec := doTransferRequest(t, h, body)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if got := decodeErrorResponse(t, rec).Error.Code; got != "body_too_large" {
+		t.Errorf("error code = %q, want body_too_large", got)
+	}
+	if svc.transferCalled != 0 {
+		t.Errorf("service was called %d times, want 0", svc.transferCalled)
+	}
+}
+
+func TestRoutes(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{"transfer", http.MethodPost, "/transfers", `{"from":"a","to":"b","amount":10,"currency":"USD"}`, http.StatusNoContent},
+		{"batch", http.MethodPost, "/transfers/batch", `{"batch":[{"from":"a","to":"b","amount":10,"currency":"USD"}]}`, http.StatusOK},
+		{"transfer wrong method", http.MethodGet, "/transfers", ``, http.StatusMethodNotAllowed},
+		{"batch wrong method", http.MethodGet, "/transfers/batch", ``, http.StatusMethodNotAllowed},
+		{"unknown path", http.MethodPost, "/nope", ``, http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			NewHandler(&fakeService{}, testBatchLimit).Routes(mux)
+
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+		})
 	}
 }
