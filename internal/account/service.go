@@ -71,6 +71,18 @@ func (k *keyedMutex) lockFor(key string) chanMutex {
 	return m
 }
 
+// Svc is the subset of the wallet service required by the HTTP handlers.
+//
+// The interface is declared on the consumer side so that handlers depend only
+// on the operations they actually call, and so that tests can substitute an
+// implementation returning arbitrary domain errors.
+//
+// Every method receives the request context and must abort when it is cancelled.
+type Svc interface {
+	Transfer(ctx context.Context, fromID, toID string, amount money.Money) error
+	TransferBatch(ctx context.Context, reqs []BatchRequest, concurrency int) []error
+}
+
 // Service coordinates operations across accounts using a Repository. It holds
 // the Repository as an interface, not a concrete type, so that the storage
 // implementation can change without affecting Service.
@@ -78,6 +90,8 @@ type Service struct {
 	repo Repository
 	kMu  keyedMutex
 }
+
+var _ Svc = (*Service)(nil)
 
 // NewService returns a Service that uses repo for account storage.
 func NewService(repo Repository) *Service {
