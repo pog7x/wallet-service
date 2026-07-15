@@ -267,11 +267,15 @@ func mappingFor(err error) errorMapping {
 	if err == nil {
 		panic("transport: mappingFor called with a nil error")
 	}
+
 	for _, m := range errorMappings {
 		if errors.Is(err, m.err) {
 			return m.errorMapping
 		}
 	}
+
+	log.Printf("transport: internal service: %v", err)
+
 	return internalMapping
 }
 

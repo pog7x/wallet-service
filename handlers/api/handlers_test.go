@@ -349,12 +349,49 @@ func TestMappingFor(t *testing.T) {
 		// Обёрнутые ошибки: Service добавляет контекст через %w, и распознавание
 		// обязано работать сквозь обёртку.
 		{"wrapped insufficient funds", fmt.Errorf("transfer: %w", account.ErrInsufficientFunds), http.StatusConflict, "insufficient_funds"},
+		{"struct insufficient funds", &account.InsufficientFundsError{}, http.StatusConflict, "insufficient_funds"},
 		{"double wrapped not found", fmt.Errorf("batch: %w", fmt.Errorf("transfer: %w", account.ErrAccountNotFound)), http.StatusNotFound, "account_not_found"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := mappingFor(tt.err)
+			if got.Status != tt.wantStatus {
+				t.Errorf("status = %d, want %d", got.Status, tt.wantStatus)
+			}
+			if got.Code != tt.wantCode {
+				t.Errorf("code = %q, want %q", got.Code, tt.wantCode)
+			}
+			if got.Message == "" {
+				t.Error("message is empty: every mapping must carry a human-readable message")
+			}
+		})
+	}
+}
+
+func TestMappingForWrapped(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{"non positive amount", account.ErrNonPositiveAmount, http.StatusBadRequest, "non_positive_amount"},
+		{"same account", account.ErrSameAccount, http.StatusBadRequest, "same_account"},
+		{"account not found", account.ErrAccountNotFound, http.StatusNotFound, "account_not_found"},
+		{"insufficient funds", account.ErrInsufficientFunds, http.StatusConflict, "insufficient_funds"},
+		{"currency mismatch", account.ErrCurrencyMismatch, http.StatusConflict, "currency_mismatch"},
+		{"canceled", context.Canceled, statusClientClosedRequest, "canceled"},
+		{"deadline exceeded", context.DeadlineExceeded, http.StatusGatewayTimeout, "deadline_exceeded"},
+		{"unknown error", errors.New("boom"), http.StatusInternalServerError, "internal"},
+		{"wrapped insufficient funds", fmt.Errorf("transfer: %w", account.ErrInsufficientFunds), http.StatusConflict, "insufficient_funds"},
+		{"struct insufficient funds", &account.InsufficientFundsError{}, http.StatusConflict, "insufficient_funds"},
+		{"double wrapped not found", fmt.Errorf("batch: %w", fmt.Errorf("transfer: %w", account.ErrAccountNotFound)), http.StatusNotFound, "account_not_found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mappingFor(&account.ServiceError{Err: tt.err})
 			if got.Status != tt.wantStatus {
 				t.Errorf("status = %d, want %d", got.Status, tt.wantStatus)
 			}

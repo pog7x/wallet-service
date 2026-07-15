@@ -122,3 +122,76 @@ func TestDepositWithdrawOperations(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceErrorWrap(t *testing.T) {
+	tests := []struct {
+		name                    string
+		wrappedErr, expectedErr error
+	}{
+		{"wrapped currency mismatch", ErrCurrencyMismatch, ErrCurrencyMismatch},
+		{"wrapped non positive amount", ErrNonPositiveAmount, ErrNonPositiveAmount},
+		{"wrapped insufficient funds", ErrInsufficientFunds, ErrInsufficientFunds},
+		{"wrapped account not found", ErrAccountNotFound, ErrAccountNotFound},
+		{"wrapped same account", ErrSameAccount, ErrSameAccount},
+		{"struct wrapped insufficient funds", &InsufficientFundsError{}, ErrInsufficientFunds},
+		{"double wrapped currency mismatch", &RepositoryError{Err: ErrCurrencyMismatch}, ErrCurrencyMismatch},
+		{"double wrapped non positive amount", &RepositoryError{Err: ErrNonPositiveAmount}, ErrNonPositiveAmount},
+		{"double wrapped insufficient funds", &RepositoryError{Err: ErrInsufficientFunds}, ErrInsufficientFunds},
+		{"double wrapped account not found", &RepositoryError{Err: ErrAccountNotFound}, ErrAccountNotFound},
+		{"double wrapped same account", &RepositoryError{Err: ErrSameAccount}, ErrSameAccount},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chain := &ServiceError{Err: tt.wrappedErr}
+
+			if !errors.Is(chain, tt.expectedErr) {
+				t.Errorf("unexpected chained error, want: %v, got: %v", chain, tt.expectedErr)
+			}
+		})
+	}
+}
+
+func TestRepositoryErrorWrap(t *testing.T) {
+	tests := []struct {
+		name                    string
+		wrappedErr, expectedErr error
+	}{
+		{"wrapped currency mismatch", ErrCurrencyMismatch, ErrCurrencyMismatch},
+		{"wrapped non positive amount", ErrNonPositiveAmount, ErrNonPositiveAmount},
+		{"wrapped insufficient funds", ErrInsufficientFunds, ErrInsufficientFunds},
+		{"wrapped account not found", ErrAccountNotFound, ErrAccountNotFound},
+		{"wrapped same account", ErrSameAccount, ErrSameAccount},
+		{"struct wrapped insufficient funds", &InsufficientFundsError{}, ErrInsufficientFunds},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chain := &RepositoryError{Err: tt.wrappedErr}
+
+			if !errors.Is(chain, tt.expectedErr) {
+				t.Errorf("unexpected chained error, want: %v, got: %v", chain, tt.expectedErr)
+			}
+		})
+	}
+}
+
+func TestInsufficientFundsErrorWrapped(t *testing.T) {
+	expectedRequested, expectedAvailble := money.New(22222, "USD"), money.New(11111, "USD")
+
+	chain := &ServiceError{Err: &RepositoryError{Err: &InsufficientFundsError{Requested: expectedRequested, Available: expectedAvailble}}}
+
+	var ife *InsufficientFundsError
+
+	if !errors.As(chain, &ife) {
+		t.Errorf("unexpected error, want: %v, got: %v", ife, chain)
+	}
+
+	if expectedRequested.Amount() != ife.Requested.Amount() {
+		t.Errorf("unexpected requested amount, want: %d, got: %d", expectedRequested.Amount(), ife.Requested.Amount())
+	}
+
+	if expectedAvailble.Amount() != ife.Available.Amount() {
+		t.Errorf("unexpected available amount, want: %d, got: %d", expectedAvailble.Amount(), ife.Available.Amount())
+	}
+}

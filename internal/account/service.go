@@ -109,11 +109,11 @@ func NewService(repo Repository) *Service {
 // deferred to the database layer.
 func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount money.Money) error {
 	if fromID == toID {
-		return ErrSameAccount
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: ErrSameAccount}
 	}
 
 	if err := ctx.Err(); err != nil {
-		return err
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 
 	first, second := fromID, toID
@@ -123,41 +123,41 @@ func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount mone
 
 	m1 := s.kMu.lockFor(first)
 	if err := m1.Lock(ctx); err != nil {
-		return err
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 	defer m1.Unlock()
 
 	m2 := s.kMu.lockFor(second)
 	if err := m2.Lock(ctx); err != nil {
-		return err
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 	defer m2.Unlock()
 
 	fromAcc, err := s.repo.Load(ctx, fromID)
 	if err != nil {
-		return err
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 
 	toAcc, err := s.repo.Load(ctx, toID)
 	if err != nil {
-		return err
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 
 	if err = fromAcc.Withdraw(amount); err != nil {
-		return err
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 
 	if err = toAcc.Deposit(amount); err != nil {
-		return err
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 
 	// TODO: atomic problem
 	if err = s.repo.Save(ctx, fromAcc); err != nil {
-		return err
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 
 	if err = s.repo.Save(ctx, toAcc); err != nil {
-		return err
+		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 
 	return nil

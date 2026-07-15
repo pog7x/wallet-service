@@ -45,7 +45,7 @@ func NewMemRepository() *MemRepository {
 // changes made through it are not persisted until it is passed to Save.
 func (mr *MemRepository) Load(ctx context.Context, id string) (*Account, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, &RepositoryError{Op: opLoad, AccountID: id, Err: err}
 	}
 
 	mr.mu.Lock()
@@ -55,7 +55,7 @@ func (mr *MemRepository) Load(ctx context.Context, id string) (*Account, error) 
 		return &acc, nil
 	}
 
-	return nil, ErrAccountNotFound
+	return nil, &RepositoryError{Op: opLoad, AccountID: id, Err: ErrAccountNotFound}
 }
 
 // Save stores a copy of a under its identifier, replacing any existing account
@@ -64,11 +64,11 @@ func (mr *MemRepository) Load(ctx context.Context, id string) (*Account, error) 
 // by the caller do not affect the stored account until Save is called again.
 func (mr *MemRepository) Save(ctx context.Context, a *Account) error {
 	if a.currency != a.balance.Currency() {
-		return ErrCurrencyMismatch
+		return &RepositoryError{Op: opSave, AccountID: a.id, Err: ErrCurrencyMismatch}
 	}
 
 	if err := ctx.Err(); err != nil {
-		return err
+		return &RepositoryError{Op: opSave, AccountID: a.id, Err: err}
 	}
 
 	mr.mu.Lock()
@@ -76,7 +76,7 @@ func (mr *MemRepository) Save(ctx context.Context, a *Account) error {
 
 	if existAcc, ok := mr.accMap[a.id]; ok {
 		if existAcc.currency != a.currency {
-			return ErrCurrencyMismatch
+			return &RepositoryError{Op: opSave, AccountID: a.id, Err: ErrCurrencyMismatch}
 		}
 	}
 
