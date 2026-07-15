@@ -547,7 +547,7 @@ func TestTransferHandler_InsufficientFundsDoesNotLeakAmounts(t *testing.T) {
 	rec := doTransferRequest(t, h, `{"from":"a","to":"b","amount":22222,"currency":"USD"}`)
 
 	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
 	}
 
 	body := rec.Body.String()
