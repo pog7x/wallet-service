@@ -62,7 +62,7 @@ func (f *fakeService) Transfer(ctx context.Context, from, to string, amount mone
 	return f.transferErr
 }
 
-// doRequest executes the handler against a fake request carrying body and
+// doTransferBatchRequest executes the handler against a fake request carrying body and
 // returns the recorder. No real server or network is involved, because a handler
 // is an ordinary function of two arguments.
 func doTransferBatchRequest(t *testing.T, h *Handler, body string) *httptest.ResponseRecorder {
@@ -331,45 +331,13 @@ func TestTransferBatchHandler_TooManyEntries(t *testing.T) {
 }
 
 func TestMappingFor(t *testing.T) {
-	tests := []struct {
-		name       string
-		err        error
-		wantStatus int
-		wantCode   string
+	errWrappers := []struct {
+		name           string
+		errWrapperFunc func(err error) error
 	}{
-		{"non positive amount", account.ErrNonPositiveAmount, http.StatusBadRequest, "non_positive_amount"},
-		{"same account", account.ErrSameAccount, http.StatusBadRequest, "same_account"},
-		{"account not found", account.ErrAccountNotFound, http.StatusNotFound, "account_not_found"},
-		{"insufficient funds", account.ErrInsufficientFunds, http.StatusConflict, "insufficient_funds"},
-		{"currency mismatch", account.ErrCurrencyMismatch, http.StatusConflict, "currency_mismatch"},
-		{"canceled", context.Canceled, statusClientClosedRequest, "canceled"},
-		{"deadline exceeded", context.DeadlineExceeded, http.StatusGatewayTimeout, "deadline_exceeded"},
-		{"unknown error", errors.New("boom"), http.StatusInternalServerError, "internal"},
-
-		// Обёрнутые ошибки: Service добавляет контекст через %w, и распознавание
-		// обязано работать сквозь обёртку.
-		{"wrapped insufficient funds", fmt.Errorf("transfer: %w", account.ErrInsufficientFunds), http.StatusConflict, "insufficient_funds"},
-		{"struct insufficient funds", &account.InsufficientFundsError{}, http.StatusConflict, "insufficient_funds"},
-		{"double wrapped not found", fmt.Errorf("batch: %w", fmt.Errorf("transfer: %w", account.ErrAccountNotFound)), http.StatusNotFound, "account_not_found"},
+		{"error without change", func(err error) error { return err }},
+		{"wrapped in ServiceError", func(err error) error { return &account.ServiceError{Err: err} }},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := mappingFor(tt.err)
-			if got.Status != tt.wantStatus {
-				t.Errorf("status = %d, want %d", got.Status, tt.wantStatus)
-			}
-			if got.Code != tt.wantCode {
-				t.Errorf("code = %q, want %q", got.Code, tt.wantCode)
-			}
-			if got.Message == "" {
-				t.Error("message is empty: every mapping must carry a human-readable message")
-			}
-		})
-	}
-}
-
-func TestMappingForWrapped(t *testing.T) {
 	tests := []struct {
 		name       string
 		err        error
@@ -388,21 +356,23 @@ func TestMappingForWrapped(t *testing.T) {
 		{"struct insufficient funds", &account.InsufficientFundsError{}, http.StatusConflict, "insufficient_funds"},
 		{"double wrapped not found", fmt.Errorf("batch: %w", fmt.Errorf("transfer: %w", account.ErrAccountNotFound)), http.StatusNotFound, "account_not_found"},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := mappingFor(&account.ServiceError{Err: tt.err})
-			if got.Status != tt.wantStatus {
-				t.Errorf("status = %d, want %d", got.Status, tt.wantStatus)
-			}
-			if got.Code != tt.wantCode {
-				t.Errorf("code = %q, want %q", got.Code, tt.wantCode)
-			}
-			if got.Message == "" {
-				t.Error("message is empty: every mapping must carry a human-readable message")
-			}
-		})
+	for _, ew := range errWrappers {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s %s", ew.name, tt.name), func(t *testing.T) {
+				got := mappingFor(ew.errWrapperFunc(tt.err))
+				if got.Status != tt.wantStatus {
+					t.Errorf("status = %d, want %d", got.Status, tt.wantStatus)
+				}
+				if got.Code != tt.wantCode {
+					t.Errorf("code = %q, want %q", got.Code, tt.wantCode)
+				}
+				if got.Message == "" {
+					t.Error("message is empty: every mapping must carry a human-readable message")
+				}
+			})
+		}
 	}
+
 }
 
 // TestErrorMappingsAreUnique guards the mapping table against a copy-paste
@@ -557,10 +527,41 @@ func TestTransferHandler_InternalErrorIsNotLeaked(t *testing.T) {
 	rec := doTransferRequest(t, h, `{"from":"a","to":"b","amount":10,"currency":"USD"}`)
 
 	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", rec.Code)
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 	if body := rec.Body.String(); strings.Contains(body, secret.Error()) {
 		t.Fatalf("response body leaks internal error text: %s", body)
+	}
+}
+
+func TestTransferHandler_InsufficientFundsDoesNotLeakAmounts(t *testing.T) {
+	requestedAmount, requestedAmountStr := money.New(22222, "USD"), "22222"
+	availableAmount, availableAmountStr := money.New(11111, "USD"), "11111"
+	svc := &fakeService{
+		transferErr: &account.InsufficientFundsError{
+			Requested: requestedAmount,
+			Available: availableAmount},
+	}
+	h := NewHandler(svc, testBatchLimit)
+
+	rec := doTransferRequest(t, h, `{"from":"a","to":"b","amount":22222,"currency":"USD"}`)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+
+	body := rec.Body.String()
+	if strings.Contains(body, availableAmountStr) {
+		t.Fatalf("response body leaks available amount: %s", body)
+	}
+	if strings.Contains(body, requestedAmountStr) {
+		t.Fatalf("response body leaks requested amount: %s", body)
+	}
+	if strings.Contains(body, availableAmount.Format()) {
+		t.Fatalf("response body leaks formatted available amount: %s", body)
+	}
+	if strings.Contains(body, requestedAmount.Format()) {
+		t.Fatalf("response body leaks formatted requested amount: %s", body)
 	}
 }
 

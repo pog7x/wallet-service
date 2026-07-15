@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"testing"
 
 	"github.com/pog7x/wallet-service/internal/money"
@@ -123,7 +124,15 @@ func TestDepositWithdrawOperations(t *testing.T) {
 	}
 }
 
-func TestServiceErrorWrap(t *testing.T) {
+func TestWrapErrors(t *testing.T) {
+	errWrappers := []struct {
+		name           string
+		errWrapperFunc func(err error) error
+	}{
+		{"RepositoryError", func(err error) error { return &RepositoryError{Err: err} }},
+		{"ServiceError", func(err error) error { return &ServiceError{Err: err} }},
+	}
+
 	tests := []struct {
 		name                    string
 		wrappedErr, expectedErr error
@@ -140,58 +149,56 @@ func TestServiceErrorWrap(t *testing.T) {
 		{"double wrapped account not found", &RepositoryError{Err: ErrAccountNotFound}, ErrAccountNotFound},
 		{"double wrapped same account", &RepositoryError{Err: ErrSameAccount}, ErrSameAccount},
 	}
+	for _, ew := range errWrappers {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s %s", ew.name, tt.name), func(t *testing.T) {
+				chain := ew.errWrapperFunc(tt.wrappedErr)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			chain := &ServiceError{Err: tt.wrappedErr}
-
-			if !errors.Is(chain, tt.expectedErr) {
-				t.Errorf("unexpected chained error, want: %v, got: %v", chain, tt.expectedErr)
-			}
-		})
-	}
-}
-
-func TestRepositoryErrorWrap(t *testing.T) {
-	tests := []struct {
-		name                    string
-		wrappedErr, expectedErr error
-	}{
-		{"wrapped currency mismatch", ErrCurrencyMismatch, ErrCurrencyMismatch},
-		{"wrapped non positive amount", ErrNonPositiveAmount, ErrNonPositiveAmount},
-		{"wrapped insufficient funds", ErrInsufficientFunds, ErrInsufficientFunds},
-		{"wrapped account not found", ErrAccountNotFound, ErrAccountNotFound},
-		{"wrapped same account", ErrSameAccount, ErrSameAccount},
-		{"struct wrapped insufficient funds", &InsufficientFundsError{}, ErrInsufficientFunds},
+				if !errors.Is(chain, tt.expectedErr) {
+					t.Errorf("unexpected chained error, want: %v, got: %v", chain, tt.expectedErr)
+				}
+			})
+		}
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			chain := &RepositoryError{Err: tt.wrappedErr}
-
-			if !errors.Is(chain, tt.expectedErr) {
-				t.Errorf("unexpected chained error, want: %v, got: %v", chain, tt.expectedErr)
-			}
-		})
-	}
 }
 
 func TestInsufficientFundsErrorWrapped(t *testing.T) {
-	expectedRequested, expectedAvailble := money.New(22222, "USD"), money.New(11111, "USD")
+	expectedRequested, expectedAvailable := money.New(22222, "USD"), money.New(11111, "USD")
 
-	chain := &ServiceError{Err: &RepositoryError{Err: &InsufficientFundsError{Requested: expectedRequested, Available: expectedAvailble}}}
+	chain := &ServiceError{Err: &RepositoryError{Err: &InsufficientFundsError{Requested: expectedRequested, Available: expectedAvailable}}}
 
 	var ife *InsufficientFundsError
 
 	if !errors.As(chain, &ife) {
-		t.Errorf("unexpected error, want: %v, got: %v", ife, chain)
+		t.Error("errors.As failed to extract InsufficientFundsError from chain")
 	}
 
 	if expectedRequested.Amount() != ife.Requested.Amount() {
 		t.Errorf("unexpected requested amount, want: %d, got: %d", expectedRequested.Amount(), ife.Requested.Amount())
 	}
 
-	if expectedAvailble.Amount() != ife.Available.Amount() {
-		t.Errorf("unexpected available amount, want: %d, got: %d", expectedAvailble.Amount(), ife.Available.Amount())
+	if expectedAvailable.Amount() != ife.Available.Amount() {
+		t.Errorf("unexpected available amount, want: %d, got: %d", expectedAvailable.Amount(), ife.Available.Amount())
+	}
+}
+
+func TestInsufficientFundsError_ErrorHidesAmounts(t *testing.T) {
+	requestedAmount, requestedAmountStr := money.New(22222, "USD"), "22222"
+	availableAmount, availableAmountStr := money.New(11111, "USD"), "11111"
+
+	errStr := (&InsufficientFundsError{Requested: requestedAmount, Available: availableAmount}).Error()
+
+	if strings.Contains(errStr, availableAmountStr) {
+		t.Fatalf("InsufficientFundsError.Error() leaks available amount: %s", errStr)
+	}
+	if strings.Contains(errStr, requestedAmountStr) {
+		t.Fatalf("InsufficientFundsError.Error() leaks requested amount: %s", errStr)
+	}
+	if strings.Contains(errStr, availableAmount.Format()) {
+		t.Fatalf("InsufficientFundsError.Error() leaks formatted available amount: %s", errStr)
+	}
+	if strings.Contains(errStr, requestedAmount.Format()) {
+		t.Fatalf("InsufficientFundsError.Error() leaks formatted requested amount: %s", errStr)
 	}
 }
