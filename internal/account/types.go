@@ -5,6 +5,7 @@ package account
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/pog7x/wallet-service/internal/money"
 )
@@ -26,6 +27,129 @@ var (
 	// same source and destination account and was therefore rejected.
 	ErrSameAccount = errors.New("account: same source and destination account")
 )
+
+// operation identifies the account operation during which an error occurred.
+// It is carried by RepositoryError and ServiceError so that a failure can be
+// attributed to a specific operation without parsing the error text.
+//
+// The zero value is OpUnknown and denotes an unset operation; it is never a
+// valid operation and its presence in an error indicates that the operation
+// was not recorded.
+type operation int
+
+const (
+	opUnknown operation = iota
+	opLoad
+	opSave
+	opTransfer
+)
+
+// String returns the lowercase name of the operation for use in error text and
+// logs. Unknown values, including OpUnknown, render as "unknown", so an
+// unrecorded operation is visible rather than blank.
+func (o operation) String() string {
+	switch o {
+	case opLoad:
+		return "load"
+	case opSave:
+		return "save"
+	case opTransfer:
+		return "transfer"
+	default:
+		return "unknown"
+	}
+}
+
+// RepositoryError reports a failure of a repository operation and identifies
+// the operation and the account it concerned. It wraps the underlying cause,
+// which may be a domain sentinel such as ErrAccountNotFound or an error from
+// the storage layer such as a cancelled context.
+//
+// The wrapped error is reachable with errors.Is and errors.As through Unwrap,
+// so callers must match causes with those functions rather than comparing the
+// error directly. The error text carries the internal account identifier for
+// diagnosis; it never carries balances or amounts.
+type RepositoryError struct {
+	Op        operation
+	AccountID string
+	Err       error
+}
+
+// Error reports the operation, the account identifier and the wrapped cause.
+// The identifier is an internal one and is safe to log; no monetary values
+// appear in the text.
+func (e *RepositoryError) Error() string {
+	return fmt.Sprintf("%s id='%s': %v", e.Op, e.AccountID, e.Err)
+}
+
+// Unwrap returns the wrapped cause so that errors.Is and errors.As can inspect
+// it. It is the sole mechanism by which the wrapped error is exposed; without
+// it the cause would be unreachable and the error would be a dead end in the
+// chain.
+func (e *RepositoryError) Unwrap() error {
+	return e.Err
+}
+
+// InsufficientFundsError reports that a withdrawal was rejected because the
+// balance was smaller than the requested amount. It carries the requested
+// amount and the available balance so that a caller can act on the exact
+// values, retrieving them with errors.As.
+//
+// The amounts live in fields only and never appear in the error text, because
+// the text is expected to reach logs, where balances must not be exposed. A
+// caller that surfaces these values elsewhere, such as an API response, is
+// responsible for deciding whether the recipient is allowed to see them.
+//
+// InsufficientFundsError satisfies errors.Is(err, ErrInsufficientFunds): every
+// instance reports itself as equal to that sentinel regardless of its field
+// values, so existing checks against the sentinel keep working after the
+// change from a plain sentinel to a data-carrying error.
+type InsufficientFundsError struct {
+	Requested, Available money.Money
+}
+
+// Error returns the same text as ErrInsufficientFunds, deliberately without the
+// amounts, so that the message is safe to log. The amounts are available
+// through the struct fields for callers that need them.
+func (e *InsufficientFundsError) Error() string {
+	return ErrInsufficientFunds.Error()
+}
+
+// Is reports whether target is ErrInsufficientFunds, which makes every
+// InsufficientFundsError match that sentinel under errors.Is. target is the
+// error being searched for, not a wrapped cause, so it is compared directly
+// rather than unwrapped.
+func (e *InsufficientFundsError) Is(target error) bool {
+	return target == ErrInsufficientFunds
+}
+
+// ServiceError reports a failure of a service operation and identifies the
+// operation and the source and destination accounts it concerned. It wraps the
+// underlying cause, which may be a domain sentinel, an InsufficientFundsError,
+// or a RepositoryError raised by the storage the service called.
+//
+// The wrapped error is reachable with errors.Is and errors.As through Unwrap,
+// so a service error raised around a repository error still matches the
+// original domain cause. The error text carries the internal account
+// identifiers for diagnosis and never carries amounts.
+type ServiceError struct {
+	Op           operation
+	FromID, ToID string
+	Err          error
+}
+
+// Error reports the operation, both account identifiers and the wrapped cause.
+// The identifiers are internal ones and are safe to log; no monetary values
+// appear in the text.
+func (e *ServiceError) Error() string {
+	return fmt.Sprintf("%s from %s to %s: %v", e.Op, e.FromID, e.ToID, e.Err)
+}
+
+// Unwrap returns the wrapped cause so that errors.Is and errors.As can traverse
+// past this error to the cause the service wrapped.
+func (e *ServiceError) Unwrap() error {
+	return e.Err
+}
 
 // Account is a wallet account holding a balance in a single fixed currency.
 // Its zero value is not usable; create an account with NewAccount. All
@@ -78,7 +202,7 @@ func (a *Account) Withdraw(amount money.Money) error {
 	}
 
 	if amount.Amount() > a.balance.Amount() {
-		return ErrInsufficientFunds
+		return &InsufficientFundsError{Requested: amount, Available: a.balance}
 	}
 
 	res, ok := a.balance.Sub(amount)
