@@ -32,7 +32,7 @@ var (
 // It is carried by RepositoryError and ServiceError so that a failure can be
 // attributed to a specific operation without parsing the error text.
 //
-// The zero value is OpUnknown and denotes an unset operation; it is never a
+// The zero value is opUnknown and denotes an unset operation; it is never a
 // valid operation and its presence in an error indicates that the operation
 // was not recorded.
 type operation int
@@ -45,7 +45,7 @@ const (
 )
 
 // String returns the lowercase name of the operation for use in error text and
-// logs. Unknown values, including OpUnknown, render as "unknown", so an
+// logs. Unknown values, including opUnknown, render as "unknown", so an
 // unrecorded operation is visible rather than blank.
 func (o operation) String() string {
 	switch o {
