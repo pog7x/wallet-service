@@ -12,12 +12,17 @@ linters:
     - revive # стиль/идиоматика
     - gocritic
     - misspell
+    - govet
+    - nilnil
+    - nilerr
+    - nilnesserr
   settings:
     errcheck:
       check-type-assertions: true
     govet:
       enable:
         - shadow # затенение переменных — частый источник багов
+        - nilness
   exclusions:
     presets:
       - std-error-handling
