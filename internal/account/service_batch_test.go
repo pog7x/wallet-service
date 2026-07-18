@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/pog7x/wallet-service/internal/money"
+	"go.uber.org/goleak"
 )
 
 func TestTransferBatch_AllSucceed(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	repo := newFundedRepo(t, map[string]int64{"A": 10000, "B": 0, "C": 5000, "D": 0})
 	svc := NewService(repo)
 
@@ -37,6 +39,7 @@ func TestTransferBatch_AllSucceed(t *testing.T) {
 }
 
 func TestTransferBatch_PartialFailure(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	// C has only 100, so the 5000 transfer must fail with ErrInsufficientFunds
 	// while the A->B transfer succeeds independently.
 	repo := newFundedRepo(t, map[string]int64{"A": 10000, "B": 0, "C": 100, "D": 0})
@@ -73,6 +76,7 @@ func TestTransferBatch_PartialFailure(t *testing.T) {
 }
 
 func TestTransferBatch_ContextCancelled(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	initial := map[string]int64{"A": 10000, "B": 0, "C": 5000, "D": 0}
 	repo := newFundedRepo(t, initial)
 	svc := NewService(repo)
@@ -129,6 +133,7 @@ func (c *countingRepo) Save(ctx context.Context, a *Account) error {
 }
 
 func TestTransferBatch_ConcurrencyLimit(t *testing.T) {
+	defer goleak.VerifyNone(t)
 	const (
 		pairs       = 20
 		concurrency = 4
