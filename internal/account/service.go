@@ -183,7 +183,7 @@ type BatchRequest struct {
 // storage connections.
 //
 // TransferBatch respects ctx. If ctx is cancelled, requests not yet started
-// receive ctx.Err() without running, and requests already started observe the
+// receive ctx.Err(), and requests already started observe the
 // cancellation through the Transfer they invoke. A cancelled batch leaves the
 // accounts of unstarted requests unchanged.
 func (s *Service) TransferBatch(ctx context.Context, reqs []BatchRequest, concurrency int) []error {
