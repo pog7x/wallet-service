@@ -6,6 +6,20 @@ import (
 	"io"
 )
 
+// roundRobinChain prints the numbers 1..n as lines of the form
+// "goroutine i: v". The workers form a ring of k goroutines and each value is
+// forwarded to the next worker, so value v is always printed by worker
+// (v-1)%k. It returns immediately when k < 1 or n < 1.
+//
+// roundRobinChain respects ctx: cancelling it stops the pipeline and makes the
+// function return without printing the remaining values.
+//
+// The caller must cancel ctx to release the worker goroutines. They do not
+// exit on their own: after the last value is printed the ring has no more work,
+// yet every worker stays blocked on its receive until ctx is cancelled. A
+// caller that lets ctx outlive the call therefore leaks k goroutines, each
+// parked in a waiting state and keeping its stack alive. Pairing the call with
+// defer cancel() is the intended usage.
 func roundRobinChain(ctx context.Context, w io.Writer, k int, n int) {
 	if k < 1 || n < 1 {
 		return
@@ -61,7 +75,11 @@ func roundRobinChain(ctx context.Context, w io.Writer, k int, n int) {
 		}
 	}()
 
-	chArr[0] <- 1
+	select {
+	case chArr[0] <- 1:
+	case <-ctx.Done():
+		return
+	}
 
 	for {
 		select {
