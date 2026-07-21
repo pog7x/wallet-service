@@ -135,12 +135,32 @@ func TestRoundRobinChain_CancelMidRun(t *testing.T) {
 		roundRobinChain(ctx, &buf, k, n)
 		close(done)
 	}()
-
+	time.Sleep(10 * time.Millisecond)
 	cancel()
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("roundRobinChain did not stop after context cancellation")
+	}
+}
+
+func TestRoundRobinChain_CancelBeforeStart(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		var buf bytes.Buffer
+		roundRobinChain(ctx, &buf, 3, 100)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("roundRobinChain did not return for an already cancelled context")
 	}
 }

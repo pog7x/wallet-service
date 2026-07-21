@@ -182,10 +182,15 @@ type BatchRequest struct {
 // starting an unbounded number of goroutines and exhausting resources such as
 // storage connections.
 //
-// TransferBatch respects ctx. If ctx is cancelled, requests not yet started
-// receive ctx.Err(), and requests already started observe the
-// cancellation through the Transfer they invoke. A cancelled batch leaves the
-// accounts of unstarted requests unchanged.
+// TransferBatch respects ctx, but cancellation is observed per request rather
+// than atomically across the batch. Once ctx is cancelled, each remaining
+// request resolves one of two ways. If its semaphore slot is not immediately
+// available, the request is never started and results[i] is ctx.Err(). If a
+// slot happens to be free at that moment, the select may still start it, and
+// the request then fails inside Transfer with a wrapped cancellation error.
+// Either way results[i] is non-nil. A request that never started leaves its
+// accounts unchanged; a request already running is subject to Transfer's own
+// semantics and is not rolled back by TransferBatch.
 func (s *Service) TransferBatch(ctx context.Context, reqs []BatchRequest, concurrency int) []error {
 	if concurrency < 1 {
 		concurrency = 1
