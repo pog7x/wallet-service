@@ -22,7 +22,7 @@ func TestMemRepositorySaveSuccess(t *testing.T) {
 	expectedAmount := money.New(int64(734643), expectedCurrency)
 
 	mr := NewMemRepository()
-	mr.accMap[expectedAccountID] = &Account{
+	mr.accMap[expectedAccountID] = Account{
 		balance:  money.New(0, expectedCurrency),
 		currency: expectedCurrency,
 		id:       expectedAccountID,
@@ -48,7 +48,7 @@ func TestMemRepositorySaveFail(t *testing.T) {
 	expectedAmount := money.New(int64(0), expectedCurrency)
 
 	mr := NewMemRepository()
-	mr.accMap[expectedAccountID] = &Account{
+	mr.accMap[expectedAccountID] = Account{
 		balance:  expectedAmount,
 		currency: expectedCurrency,
 		id:       expectedAccountID,
@@ -78,7 +78,7 @@ func TestMemRepositoryLoadSuccess(t *testing.T) {
 	expectedAmount := money.New(int64(734643), expectedCurrency)
 	mr := NewMemRepository()
 
-	mr.accMap[expectedAccountID] = &Account{balance: expectedAmount, currency: expectedCurrency, id: expectedAccountID}
+	mr.accMap[expectedAccountID] = Account{balance: expectedAmount, currency: expectedCurrency, id: expectedAccountID}
 
 	acc, err := mr.Load(t.Context(), expectedAccountID)
 	if err != nil {
@@ -112,6 +112,47 @@ func TestMemRepositoryLoadFail(t *testing.T) {
 	_, err := mr.Load(t.Context(), expectedAccountID)
 	if !errors.Is(err, ErrAccountNotFound) {
 		t.Errorf("Load(%s) unexpected error, want %v got %v", expectedAccountID, ErrAccountNotFound, err)
+	}
+}
+
+func TestMemRepositoryLoadDataNotChange(t *testing.T) {
+	ctx := t.Context()
+	expectedAccountID, expectedCurrency := "654635634", money.Currency("USD")
+	expectedAmount := money.New(int64(734643), expectedCurrency)
+	mr := NewMemRepository()
+
+	mr.accMap[expectedAccountID] = Account{balance: expectedAmount, currency: expectedCurrency, id: expectedAccountID}
+
+	acc, err := mr.Load(ctx, expectedAccountID)
+	if err != nil {
+		t.Errorf("Got unexpected error %v", err)
+	}
+
+	acc.balance = money.New(0, "EUR")
+	acc.currency = money.Currency("EUR")
+	acc.id = "changed id"
+
+	acc, err = mr.Load(ctx, expectedAccountID)
+	if err != nil {
+		t.Errorf("Got unexpected error %v", err)
+	}
+	if acc.Balance().Amount() != expectedAmount.Amount() {
+		t.Errorf(
+			"account amount not equal to expected amount, want: %d got: %d",
+			expectedAmount.Amount(), acc.Balance().Amount(),
+		)
+	}
+	if acc.Balance().Currency() != expectedCurrency {
+		t.Errorf(
+			"account balance currency not equal to expected currency, want: %s got: %s",
+			expectedCurrency, acc.Balance().Currency(),
+		)
+	}
+	if acc.currency != expectedCurrency {
+		t.Errorf(
+			"account currency not equal to expected currency, want: %s got: %s",
+			expectedCurrency, acc.currency,
+		)
 	}
 }
 
