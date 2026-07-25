@@ -28,7 +28,7 @@ func TestMemRepositorySaveSuccess(t *testing.T) {
 		id:       expectedAccountID,
 	}
 
-	err := mr.Save(t.Context(), &Account{balance: expectedAmount, currency: expectedCurrency, id: expectedAccountID})
+	err := mr.Save(t.Context(), Account{balance: expectedAmount, currency: expectedCurrency, id: expectedAccountID})
 	if err != nil {
 		t.Errorf("Save(*Account) unexpected error %v", err)
 	}
@@ -54,12 +54,12 @@ func TestMemRepositorySaveFail(t *testing.T) {
 		id:       expectedAccountID,
 	}
 
-	err := mr.Save(ctx, &Account{balance: money.New(int64(734643), "EUR"), currency: "EUR", id: expectedAccountID})
+	err := mr.Save(ctx, Account{balance: money.New(int64(734643), "EUR"), currency: "EUR", id: expectedAccountID})
 	if !errors.Is(err, ErrCurrencyMismatch) {
 		t.Errorf("Save(*Account) unexpected error, want %v got %v", ErrCurrencyMismatch, err)
 	}
 
-	err = mr.Save(ctx, &Account{balance: money.New(int64(734643), "EUR"), currency: expectedCurrency, id: expectedAccountID})
+	err = mr.Save(ctx, Account{balance: money.New(int64(734643), "EUR"), currency: expectedCurrency, id: expectedAccountID})
 	if !errors.Is(err, ErrCurrencyMismatch) {
 		t.Errorf("Save(*Account) unexpected error, want %v got %v", ErrCurrencyMismatch, err)
 	}
@@ -176,13 +176,13 @@ func TestMemRepositoryLoadAndSaveConcurrent(t *testing.T) {
 			testID := fmt.Sprintf("%d", c)
 			_, _ = mr.Load(ctx, testID)
 			testAcc := NewAccount(testID, "USD")
-			_ = mr.Save(ctx, testAcc)
+			_ = mr.Save(ctx, *testAcc)
 			_, _ = mr.Load(ctx, testID)
 			testAcc.balance = money.New(int64(c), "USD")
-			_ = mr.Save(ctx, testAcc)
+			_ = mr.Save(ctx, *testAcc)
 			_, _ = mr.Load(ctx, testID)
 			testAcc.balance = money.New(int64(c+30), "USD")
-			_ = mr.Save(ctx, testAcc)
+			_ = mr.Save(ctx, *testAcc)
 			_, _ = mr.Load(ctx, testID)
 		}(i)
 	}

@@ -28,7 +28,7 @@ func newFundedRepo(tb testing.TB, balances map[string]int64) *MemRepository {
 				tb.Fatalf("seed deposit for %q: %v", id, err)
 			}
 		}
-		if err := repo.Save(tb.Context(), acc); err != nil {
+		if err := repo.Save(tb.Context(), *acc); err != nil {
 			tb.Fatalf("seed save for %q: %v", id, err)
 		}
 	}

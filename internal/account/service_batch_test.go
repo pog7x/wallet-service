@@ -114,7 +114,7 @@ type countingRepo struct {
 	hold     time.Duration
 }
 
-func (c *countingRepo) Load(ctx context.Context, id string) (*Account, error) {
+func (c *countingRepo) Load(ctx context.Context, id string) (Account, error) {
 	n := c.inFlight.Add(1)
 	for {
 		m := c.maxSeen.Load()
@@ -128,7 +128,7 @@ func (c *countingRepo) Load(ctx context.Context, id string) (*Account, error) {
 	return acc, err
 }
 
-func (c *countingRepo) Save(ctx context.Context, a *Account) error {
+func (c *countingRepo) Save(ctx context.Context, a Account) error {
 	return c.inner.Save(ctx, a)
 }
 
