@@ -26,7 +26,7 @@ type Repository interface {
 // not for persistence, because its contents are lost when the process exits.
 // It is safe for concurrent use by multiple goroutines.
 type MemRepository struct {
-	accMap map[string]Account
+	accMap map[string]*Account
 	mu     sync.Mutex
 }
 
@@ -36,7 +36,7 @@ var _ Repository = (*MemRepository)(nil)
 // underlying map, because writing to a nil map panics, so the zero value of
 // MemRepository must not be used directly.
 func NewMemRepository() *MemRepository {
-	return &MemRepository{accMap: make(map[string]Account)}
+	return &MemRepository{accMap: make(map[string]*Account)}
 }
 
 // Load returns a pointer to a copy of the stored account, or ErrAccountNotFound
@@ -52,7 +52,7 @@ func (mr *MemRepository) Load(ctx context.Context, id string) (*Account, error) 
 	defer mr.mu.Unlock()
 
 	if acc, ok := mr.accMap[id]; ok {
-		return &acc, nil
+		return acc, nil
 	}
 
 	return nil, &RepositoryError{Op: opLoad, AccountID: id, Err: ErrAccountNotFound}
@@ -80,6 +80,6 @@ func (mr *MemRepository) Save(ctx context.Context, a *Account) error {
 		}
 	}
 
-	mr.accMap[a.id] = *a
+	mr.accMap[a.id] = a
 	return nil
 }
