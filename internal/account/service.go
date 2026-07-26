@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pog7x/wallet-service/internal/money"
 )
@@ -77,6 +78,8 @@ func (k *keyedMutex) lockFor(key string) chanMutex {
 type Service struct {
 	repo Repository
 	kMu  keyedMutex
+
+	total, success, failed atomic.Int64
 }
 
 // NewService returns a Service that uses repo for account storage.
@@ -107,12 +110,21 @@ func NewService(repo Repository) *Service {
 // and the second fails, the source is debited without crediting the
 // destination. Restoring that guarantee requires transactional storage and is
 // deferred to the database layer.
-func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount money.Money) error {
+func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount money.Money) (err error) {
+	defer func() {
+		s.total.Add(1)
+		if err != nil {
+			s.failed.Add(1)
+			return
+		}
+		s.success.Add(1)
+	}()
+
 	if fromID == toID {
 		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: ErrSameAccount}
 	}
 
-	if err := ctx.Err(); err != nil {
+	if err = ctx.Err(); err != nil {
 		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 
@@ -122,13 +134,13 @@ func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount mone
 	}
 
 	m1 := s.kMu.lockFor(first)
-	if err := m1.Lock(ctx); err != nil {
+	if err = m1.Lock(ctx); err != nil {
 		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 	defer m1.Unlock()
 
 	m2 := s.kMu.lockFor(second)
-	if err := m2.Lock(ctx); err != nil {
+	if err = m2.Lock(ctx); err != nil {
 		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 	defer m2.Unlock()

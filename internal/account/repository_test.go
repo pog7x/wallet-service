@@ -189,3 +189,44 @@ func TestMemRepositoryLoadAndSaveConcurrent(t *testing.T) {
 
 	wg.Wait()
 }
+
+func BenchmarkMemRepositoryTestMutexParallel(b *testing.B) {
+	accountID, expectedCurrency := "654635634", money.Currency("USD")
+	expectedAmount := money.New(int64(734643), expectedCurrency)
+
+	mr := NewMemRepository()
+	mr.accMap[accountID] = Account{
+		balance:  money.New(0, expectedCurrency),
+		currency: expectedCurrency,
+		id:       accountID,
+	}
+
+	parallelism := []int{1, 2, 4, 8}
+
+	for _, p := range parallelism {
+		b.Run(fmt.Sprint(p), func(b *testing.B) {
+			b.SetParallelism(p)
+			b.ReportAllocs()
+
+			for range 25 {
+				b.RunParallel(func(pb *testing.PB) {
+					for pb.Next() {
+						_, err := mr.Load(b.Context(), accountID)
+						if err != nil {
+							b.Errorf("Load(*Account) unexpected error %v", err)
+						}
+					}
+				})
+			}
+
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					err := mr.Save(b.Context(), Account{balance: expectedAmount, currency: expectedCurrency, id: accountID})
+					if err != nil {
+						b.Errorf("Save(*Account) unexpected error %v", err)
+					}
+				}
+			})
+		})
+	}
+}

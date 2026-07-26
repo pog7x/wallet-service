@@ -351,7 +351,7 @@ func TestTransferAllocations(t *testing.T) {
 		}
 	})
 
-	const want = 2 // ожидаемое число выделений в куче на один вызов
+	const want = 0 // ожидаемое число выделений в куче на один вызов
 	if avg > want {
 		t.Errorf("Transfer avg allocations count is %.0f, No more than %d were expected", avg, want)
 	}
@@ -383,4 +383,42 @@ func BenchmarkTransfer_RunParallel(b *testing.B) {
 			}
 		}
 	})
+}
+
+func TestTransfer_ParallelAtomicCount(t *testing.T) {
+	const (
+		fromID = "A"
+		toID   = "B"
+
+		parallelCount = 50
+	)
+
+	repo := newFundedRepo(t, map[string]int64{fromID: int64(1_000_000), toID: int64(1000)})
+	svc := NewService(repo)
+
+	wg := sync.WaitGroup{}
+
+	for i := range parallelCount {
+		wg.Go(func() {
+			ctx, cancel := context.WithCancel(t.Context())
+			if i%2 == 0 {
+				cancel()
+			}
+			defer cancel()
+
+			_ = svc.Transfer(ctx, fromID, toID, money.New(int64(1), transferCurrency))
+		})
+	}
+
+	wg.Wait()
+
+	if svc.total.Load() != parallelCount {
+		t.Errorf("Service.total got = %d, want = %d", svc.total.Load(), parallelCount)
+	}
+	if svc.success.Load() != parallelCount/2 {
+		t.Errorf("Service.success got = %d, want = %d", svc.success.Load(), parallelCount/2)
+	}
+	if svc.failed.Load() != parallelCount/2 {
+		t.Errorf("Service.failed got = %d, want = %d", svc.failed.Load(), parallelCount/2)
+	}
 }
