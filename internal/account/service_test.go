@@ -18,18 +18,18 @@ const transferCurrency = money.Currency("USD")
 // balances maps an account id to its initial balance in minor units,
 // all in transferCurrency. It fails the test if any seeding step errors,
 // because a broken setup must not be reported as a Transfer failure.
-func newFundedRepo(t *testing.T, balances map[string]int64) *MemRepository {
-	t.Helper()
+func newFundedRepo(tb testing.TB, balances map[string]int64) *MemRepository {
+	tb.Helper()
 	repo := NewMemRepository()
 	for id, amount := range balances {
 		acc := NewAccount(id, transferCurrency)
 		if amount > 0 {
 			if err := acc.Deposit(money.New(amount, transferCurrency)); err != nil {
-				t.Fatalf("seed deposit for %q: %v", id, err)
+				tb.Fatalf("seed deposit for %q: %v", id, err)
 			}
 		}
-		if err := repo.Save(t.Context(), acc); err != nil {
-			t.Fatalf("seed save for %q: %v", id, err)
+		if err := repo.Save(tb.Context(), *acc); err != nil {
+			tb.Fatalf("seed save for %q: %v", id, err)
 		}
 	}
 	return repo
@@ -37,11 +37,11 @@ func newFundedRepo(t *testing.T, balances map[string]int64) *MemRepository {
 
 // mustBalance loads an account and returns its balance in minor units,
 // failing the test if the account cannot be loaded.
-func mustBalance(t *testing.T, repo *MemRepository, id string) int64 {
-	t.Helper()
-	acc, err := repo.Load(t.Context(), id)
+func mustBalance(tb testing.TB, repo *MemRepository, id string) int64 {
+	tb.Helper()
+	acc, err := repo.Load(tb.Context(), id)
 	if err != nil {
-		t.Fatalf("load %q: %v", id, err)
+		tb.Fatalf("load %q: %v", id, err)
 	}
 	return acc.Balance().Amount()
 }
@@ -339,4 +339,48 @@ func TestTransfer_CancelWhileWaitingForLock(t *testing.T) {
 	if got := mustBalance(t, repo, "B"); got != 1000 {
 		t.Errorf("B balance = %d, want unchanged 1000", got)
 	}
+}
+
+func TestTransferAllocations(t *testing.T) {
+	repo := newFundedRepo(t, map[string]int64{"A": 10000, "B": 5000})
+	svc := NewService(repo)
+
+	avg := testing.AllocsPerRun(100, func() {
+		if err := svc.Transfer(t.Context(), "A", "B", money.New(10, transferCurrency)); err != nil {
+			t.Fatalf("Transfer: unexpected error: %v", err)
+		}
+	})
+
+	const want = 2 // ожидаемое число выделений в куче на один вызов
+	if avg > want {
+		t.Errorf("Transfer avg allocations count is %.0f, No more than %d were expected", avg, want)
+	}
+}
+
+func BenchmarkTransfer(b *testing.B) {
+	repo := newFundedRepo(b, map[string]int64{"A": 100_000_000, "B": 5000})
+	svc := NewService(repo)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if err := svc.Transfer(b.Context(), "A", "B", money.New(1, transferCurrency)); err != nil {
+			b.Fatalf("Transfer: unexpected error: %v", err)
+		}
+	}
+}
+
+func BenchmarkTransfer_RunParallel(b *testing.B) {
+	repo := newFundedRepo(b, map[string]int64{"A": 100_000_000, "B": 5000})
+	svc := NewService(repo)
+
+	b.ReportAllocs()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			if err := svc.Transfer(b.Context(), "A", "B", money.New(1, transferCurrency)); err != nil {
+				b.Fatalf("Transfer: unexpected error: %v", err)
+			}
+		}
+	})
 }

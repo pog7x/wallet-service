@@ -114,7 +114,7 @@ type countingRepo struct {
 	hold     time.Duration
 }
 
-func (c *countingRepo) Load(ctx context.Context, id string) (*Account, error) {
+func (c *countingRepo) Load(ctx context.Context, id string) (Account, error) {
 	n := c.inFlight.Add(1)
 	for {
 		m := c.maxSeen.Load()
@@ -128,7 +128,7 @@ func (c *countingRepo) Load(ctx context.Context, id string) (*Account, error) {
 	return acc, err
 }
 
-func (c *countingRepo) Save(ctx context.Context, a *Account) error {
+func (c *countingRepo) Save(ctx context.Context, a Account) error {
 	return c.inner.Save(ctx, a)
 }
 
@@ -164,4 +164,95 @@ func TestTransferBatch_ConcurrencyLimit(t *testing.T) {
 	if got := cr.maxSeen.Load(); got > int32(concurrency) {
 		t.Fatalf("max concurrent Load = %d, want <= %d", got, concurrency)
 	}
+}
+
+func BenchmarkTransferBatch(b *testing.B) {
+	cases := []struct {
+		name      string
+		pairs     int
+		semaphore int
+	}{
+		{"20 pairs with semaphore 1", 20, 1},
+		{"20 pairs with semaphore 4", 20, 4},
+		{"20 pairs with semaphore 10", 20, 10},
+		{"20 pairs with semaphore 20", 20, 20},
+	}
+	for _, cc := range cases {
+		b.Run(cc.name, func(b *testing.B) {
+			balances := make(map[string]int64, cc.pairs*2)
+			reqs := make([]BatchRequest, 0, cc.pairs)
+
+			for i := range cc.pairs {
+				from := fmt.Sprintf("from-%02d", i)
+				to := fmt.Sprintf("to-%02d", i)
+				balances[from] = 1_000_000
+				balances[to] = 0
+				reqs = append(reqs, BatchRequest{From: from, To: to, Amount: money.New(1, transferCurrency)})
+			}
+
+			repo := newFundedRepo(b, balances)
+			svc := NewService(repo)
+
+			b.ReportAllocs()
+
+			for b.Loop() {
+				results := svc.TransferBatch(b.Context(), reqs, cc.semaphore)
+
+				for i, err := range results {
+					if err != nil {
+						b.Errorf("results[%d] = %v, want nil", i, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkTransferBatch_RunParallel_PerAccountBlocks(b *testing.B) {
+	var fromID = "from"
+	parallelism := []int{1, 2, 4, 8}
+
+	cases := []struct {
+		name      string
+		pairs     int
+		semaphore int
+	}{
+		{"20 pairs with semaphore 1", 20, 1},
+		{"20 pairs with semaphore 4", 20, 4},
+		{"20 pairs with semaphore 10", 20, 10},
+		{"20 pairs with semaphore 20", 20, 20},
+	}
+	for _, p := range parallelism {
+		for _, cc := range cases {
+			b.Run(fmt.Sprintf("%s_%d", cc.name, p), func(b *testing.B) {
+				balances := make(map[string]int64, cc.pairs*2)
+				reqs := make([]BatchRequest, 0, cc.pairs)
+
+				for i := range cc.pairs {
+					to := fmt.Sprintf("to-%02d", i)
+					balances[fromID] = 1_000_000
+					balances[to] = 0
+					reqs = append(reqs, BatchRequest{From: fromID, To: to, Amount: money.New(1, transferCurrency)})
+				}
+
+				repo := newFundedRepo(b, balances)
+				svc := NewService(repo)
+
+				b.ReportAllocs()
+				b.SetParallelism(p)
+				b.RunParallel(func(pb *testing.PB) {
+					for pb.Next() {
+						results := svc.TransferBatch(b.Context(), reqs, cc.semaphore)
+
+						for i, err := range results {
+							if err != nil {
+								b.Errorf("results[%d] = %v, want nil", i, err)
+							}
+						}
+					}
+				})
+			})
+		}
+	}
+
 }

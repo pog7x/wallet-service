@@ -13,12 +13,12 @@ type Repository interface {
 	// Load returns the account stored under id, or ErrAccountNotFound if none
 	// exists. It respects ctx and returns ctx.Err() without accessing storage
 	// when ctx is already cancelled.
-	Load(ctx context.Context, id string) (*Account, error)
+	Load(ctx context.Context, id string) (Account, error)
 
 	// Save stores a under its identifier, replacing any existing account with the
 	// same identifier. It respects ctx and returns ctx.Err() without writing to
 	// storage when ctx is already cancelled.
-	Save(ctx context.Context, a *Account) error
+	Save(ctx context.Context, a Account) error
 }
 
 // MemRepository is an in-memory implementation of Repository backed by a map
@@ -43,26 +43,26 @@ func NewMemRepository() *MemRepository {
 // if it does not exist. It returns ctx.Err() without reading the map when ctx
 // is already cancelled. The returned account is independent of stored state:
 // changes made through it are not persisted until it is passed to Save.
-func (mr *MemRepository) Load(ctx context.Context, id string) (*Account, error) {
+func (mr *MemRepository) Load(ctx context.Context, id string) (Account, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, &RepositoryError{Op: opLoad, AccountID: id, Err: err}
+		return Account{}, &RepositoryError{Op: opLoad, AccountID: id, Err: err}
 	}
 
 	mr.mu.Lock()
 	defer mr.mu.Unlock()
 
 	if acc, ok := mr.accMap[id]; ok {
-		return &acc, nil
+		return acc, nil
 	}
 
-	return nil, &RepositoryError{Op: opLoad, AccountID: id, Err: ErrAccountNotFound}
+	return Account{}, &RepositoryError{Op: opLoad, AccountID: id, Err: ErrAccountNotFound}
 }
 
 // Save stores a copy of a under its identifier, replacing any existing account
 // with the same identifier. It returns ctx.Err() without writing the map when
 // ctx is already cancelled. Because a copy is stored, later changes to a made
 // by the caller do not affect the stored account until Save is called again.
-func (mr *MemRepository) Save(ctx context.Context, a *Account) error {
+func (mr *MemRepository) Save(ctx context.Context, a Account) error {
 	if a.currency != a.balance.Currency() {
 		return &RepositoryError{Op: opSave, AccountID: a.id, Err: ErrCurrencyMismatch}
 	}
@@ -80,6 +80,6 @@ func (mr *MemRepository) Save(ctx context.Context, a *Account) error {
 		}
 	}
 
-	mr.accMap[a.id] = *a
+	mr.accMap[a.id] = a
 	return nil
 }
