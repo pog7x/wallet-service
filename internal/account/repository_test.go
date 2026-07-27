@@ -190,43 +190,37 @@ func TestMemRepositoryLoadAndSaveConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
-func BenchmarkMemRepositoryTestMutexParallel(b *testing.B) {
-	accountID, expectedCurrency := "654635634", money.Currency("USD")
-	expectedAmount := money.New(int64(734643), expectedCurrency)
+func BenchmarkMemRepositoryMixedParallel(b *testing.B) {
+	accountID, currency := "654635634", money.Currency("USD")
 
 	mr := NewMemRepository()
 	mr.accMap[accountID] = Account{
-		balance:  money.New(0, expectedCurrency),
-		currency: expectedCurrency,
+		balance:  money.New(int64(734643), currency),
+		currency: currency,
 		id:       accountID,
 	}
 
-	parallelism := []int{1, 2, 4, 8}
-
-	for _, p := range parallelism {
-		b.Run(fmt.Sprint(p), func(b *testing.B) {
-			b.SetParallelism(p)
-			b.ReportAllocs()
-
-			for range 25 {
-				b.RunParallel(func(pb *testing.PB) {
-					for pb.Next() {
-						_, err := mr.Load(b.Context(), accountID)
-						if err != nil {
-							b.Errorf("Load(*Account) unexpected error %v", err)
-						}
-					}
-				})
-			}
-
-			b.RunParallel(func(pb *testing.PB) {
-				for pb.Next() {
-					err := mr.Save(b.Context(), Account{balance: expectedAmount, currency: expectedCurrency, id: accountID})
-					if err != nil {
-						b.Errorf("Save(*Account) unexpected error %v", err)
-					}
-				}
-			})
-		})
+	if _, err := mr.Load(b.Context(), accountID); err != nil {
+		b.Fatalf("Load: unexpected error before benchmark: %v", err)
 	}
+
+	const writeEveryN = 20
+
+	b.ReportAllocs()
+
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			if i%writeEveryN == 0 {
+				_ = mr.Save(b.Context(), Account{
+					balance:  money.New(int64(734643), currency),
+					currency: currency,
+					id:       accountID,
+				})
+			} else {
+				_, _ = mr.Load(b.Context(), accountID)
+			}
+			i++
+		}
+	})
 }

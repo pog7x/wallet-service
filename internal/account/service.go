@@ -82,6 +82,38 @@ type Service struct {
 	total, success, failed atomic.Int64
 }
 
+// MetricsSnapshot is a point-in-time view of a Service's transfer counters.
+// The three fields are read independently and are therefore not guaranteed to
+// be mutually consistent: a snapshot taken while transfers are in progress may
+// observe Total updated before Success or Failed catches up, so Success+Failed
+// can momentarily differ from Total. This is acceptable because the counters
+// are observability metrics, not a basis for business decisions; no logic must
+// rely on the three values forming an exact accounting identity within a single
+// snapshot.
+type MetricsSnapshot struct {
+	// Total is the number of Transfer calls that have completed, regardless of
+	// outcome.
+	Total int64
+	// Success is the number of Transfer calls that completed without error.
+	Success int64
+	// Failed is the number of Transfer calls that returned an error.
+	Failed int64
+}
+
+// Metrics returns a snapshot of the service's transfer counters. Each counter
+// is read with an independent atomic load, so the returned fields are
+// individually accurate but not captured as one atomic instant: concurrent
+// transfers may change the counters between the three reads. Callers must treat
+// the result as approximate and must not depend on Success+Failed equalling
+// Total within a single snapshot. See MetricsSnapshot for the rationale.
+func (s *Service) Metrics() MetricsSnapshot {
+	return MetricsSnapshot{
+		s.total.Load(),
+		s.success.Load(),
+		s.failed.Load(),
+	}
+}
+
 // NewService returns a Service that uses repo for account storage.
 func NewService(repo Repository) *Service {
 	return &Service{repo: repo, kMu: keyedMutex{byKey: make(map[string]chanMutex)}}

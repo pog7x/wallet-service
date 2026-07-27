@@ -412,13 +412,14 @@ func TestTransfer_ParallelAtomicCount(t *testing.T) {
 
 	wg.Wait()
 
-	if svc.total.Load() != parallelCount {
-		t.Errorf("Service.total got = %d, want = %d", svc.total.Load(), parallelCount)
+	metrics := svc.Metrics()
+	if metrics.Total != parallelCount {
+		t.Errorf("Service.Metrics().Total got = %d, want = %d", metrics.Total, parallelCount)
 	}
-	if svc.success.Load() != parallelCount/2 {
-		t.Errorf("Service.success got = %d, want = %d", svc.success.Load(), parallelCount/2)
+	if metrics.Success != parallelCount/2 {
+		t.Errorf("Service.Metrics().Success got = %d, want = %d", metrics.Success, parallelCount/2)
 	}
-	if svc.failed.Load() != parallelCount/2 {
-		t.Errorf("Service.failed got = %d, want = %d", svc.failed.Load(), parallelCount/2)
+	if metrics.Failed != parallelCount/2 {
+		t.Errorf("Service.Metrics().Failed got = %d, want = %d", metrics.Failed, parallelCount/2)
 	}
 }

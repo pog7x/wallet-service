@@ -27,7 +27,7 @@ type Repository interface {
 // It is safe for concurrent use by multiple goroutines.
 type MemRepository struct {
 	accMap map[string]Account
-	mu     sync.RWMutex
+	mu     sync.Mutex
 }
 
 var _ Repository = (*MemRepository)(nil)
@@ -48,8 +48,8 @@ func (mr *MemRepository) Load(ctx context.Context, id string) (Account, error) {
 		return Account{}, &RepositoryError{Op: opLoad, AccountID: id, Err: err}
 	}
 
-	mr.mu.RLock()
-	defer mr.mu.RUnlock()
+	mr.mu.Lock()
+	defer mr.mu.Unlock()
 
 	if acc, ok := mr.accMap[id]; ok {
 		return acc, nil
