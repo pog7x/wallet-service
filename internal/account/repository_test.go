@@ -189,3 +189,38 @@ func TestMemRepositoryLoadAndSaveConcurrent(t *testing.T) {
 
 	wg.Wait()
 }
+
+func BenchmarkMemRepositoryMixedParallel(b *testing.B) {
+	accountID, currency := "654635634", money.Currency("USD")
+
+	mr := NewMemRepository()
+	mr.accMap[accountID] = Account{
+		balance:  money.New(int64(734643), currency),
+		currency: currency,
+		id:       accountID,
+	}
+
+	if _, err := mr.Load(b.Context(), accountID); err != nil {
+		b.Fatalf("Load: unexpected error before benchmark: %v", err)
+	}
+
+	const writeEveryN = 20
+
+	b.ReportAllocs()
+
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			if i%writeEveryN == 0 {
+				_ = mr.Save(b.Context(), Account{
+					balance:  money.New(int64(734643), currency),
+					currency: currency,
+					id:       accountID,
+				})
+			} else {
+				_, _ = mr.Load(b.Context(), accountID)
+			}
+			i++
+		}
+	})
+}

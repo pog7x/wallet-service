@@ -39,7 +39,7 @@ func NewMemRepository() *MemRepository {
 	return &MemRepository{accMap: make(map[string]Account)}
 }
 
-// Load returns a pointer to a copy of the stored account, or ErrAccountNotFound
+// Load returns a copy of the stored account, or ErrAccountNotFound
 // if it does not exist. It returns ctx.Err() without reading the map when ctx
 // is already cancelled. The returned account is independent of stored state:
 // changes made through it are not persisted until it is passed to Save.

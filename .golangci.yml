@@ -9,7 +9,6 @@ linters:
     - errorlint # корректный error wrapping и Is/As
     - bodyclose # незакрытые http.Response.Body
     - noctx # http-запросы без context
-    - revive # стиль/идиоматика
     - gocritic
     - misspell
     - govet

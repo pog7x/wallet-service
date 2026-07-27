@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pog7x/wallet-service/internal/money"
 )
@@ -77,6 +78,40 @@ func (k *keyedMutex) lockFor(key string) chanMutex {
 type Service struct {
 	repo Repository
 	kMu  keyedMutex
+
+	total, success, failed atomic.Int64
+}
+
+// MetricsSnapshot is a point-in-time view of a Service's transfer counters.
+// The three fields are read independently and are therefore not guaranteed to
+// be mutually consistent: a snapshot taken while transfers are in progress may
+// observe Total updated before Success or Failed catches up, so Success+Failed
+// can momentarily differ from Total. This is acceptable because the counters
+// are observability metrics, not a basis for business decisions; no logic must
+// rely on the three values forming an exact accounting identity within a single
+// snapshot.
+type MetricsSnapshot struct {
+	// Total is the number of Transfer calls that have completed, regardless of
+	// outcome.
+	Total int64
+	// Success is the number of Transfer calls that completed without error.
+	Success int64
+	// Failed is the number of Transfer calls that returned an error.
+	Failed int64
+}
+
+// Metrics returns a snapshot of the service's transfer counters. Each counter
+// is read with an independent atomic load, so the returned fields are
+// individually accurate but not captured as one atomic instant: concurrent
+// transfers may change the counters between the three reads. Callers must treat
+// the result as approximate and must not depend on Success+Failed equalling
+// Total within a single snapshot. See MetricsSnapshot for the rationale.
+func (s *Service) Metrics() MetricsSnapshot {
+	return MetricsSnapshot{
+		s.total.Load(),
+		s.success.Load(),
+		s.failed.Load(),
+	}
 }
 
 // NewService returns a Service that uses repo for account storage.
@@ -107,12 +142,21 @@ func NewService(repo Repository) *Service {
 // and the second fails, the source is debited without crediting the
 // destination. Restoring that guarantee requires transactional storage and is
 // deferred to the database layer.
-func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount money.Money) error {
+func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount money.Money) (err error) {
+	defer func() {
+		s.total.Add(1)
+		if err != nil {
+			s.failed.Add(1)
+			return
+		}
+		s.success.Add(1)
+	}()
+
 	if fromID == toID {
 		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: ErrSameAccount}
 	}
 
-	if err := ctx.Err(); err != nil {
+	if err = ctx.Err(); err != nil {
 		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 
@@ -122,13 +166,13 @@ func (s *Service) Transfer(ctx context.Context, fromID, toID string, amount mone
 	}
 
 	m1 := s.kMu.lockFor(first)
-	if err := m1.Lock(ctx); err != nil {
+	if err = m1.Lock(ctx); err != nil {
 		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 	defer m1.Unlock()
 
 	m2 := s.kMu.lockFor(second)
-	if err := m2.Lock(ctx); err != nil {
+	if err = m2.Lock(ctx); err != nil {
 		return &ServiceError{Op: opTransfer, FromID: fromID, ToID: toID, Err: err}
 	}
 	defer m2.Unlock()
