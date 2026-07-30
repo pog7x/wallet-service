@@ -17,11 +17,15 @@ type Set[T comparable] struct {
 	items map[T]struct{}
 }
 
+func New[T comparable]() *Set[T] {
+	return &Set[T]{items: make(map[T]struct{})}
+}
+
 // Add inserts v into the Set.
 // If v is already present, the Set remains unchanged.
 //
 // Panics if T is an interface and the dynamic type of v is not comparable,
-// because v is used as a map key internally.
+// because v is used as a map key (which requires hashing and equality).
 func (s *Set[T]) Add(v T) {
 	s.items[v] = struct{}{}
 }
@@ -29,22 +33,18 @@ func (s *Set[T]) Add(v T) {
 // Contains reports whether v is present in the Set.
 //
 // Panics if T is an interface and the dynamic type of v is not comparable,
-// because v is compared with existing elements using ==.
+// because membership check requires comparing v with existing keys (and
+// map access also hashes the key).
 func (s *Set[T]) Contains(v T) bool {
-	for key := range s.items {
-		if key == v {
-			return true
-		}
-	}
-	return false
+	_, ok := s.items[v]
+	return ok
 }
 
 // Remove deletes v from the Set.
 // If v is not present, the Set remains unchanged.
 //
-// This method does not panic even if v's dynamic type is non‑comparable,
-// because delete does not compare values. However, if v was previously
-// added and caused a panic, the Set may be in an inconsistent state.
+// Panics if T is an interface and the dynamic type of v is not comparable,
+// because delete internally hashes the key to locate the bucket.
 func (s *Set[T]) Remove(v T) {
 	delete(s.items, v)
 }
