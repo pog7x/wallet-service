@@ -11,8 +11,14 @@ func TestSet_Add(t *testing.T) {
 	toSet := 1
 
 	s.Add(toSet)
+	s.Add(toSet)
+	s.Add(toSet)
+
 	if _, ok := s.items[toSet]; !ok {
 		t.Errorf("want = %t, got = %t", true, ok)
+	}
+	if len(s.items) != 1 {
+		t.Errorf("want len = %d, got = %d", 1, s.Len())
 	}
 }
 
@@ -54,15 +60,14 @@ func TestSet_Len(t *testing.T) {
 func TestSet_Items(t *testing.T) {
 	s := New[int]()
 	itemsLen := 10
-	forCheck := make([]int, itemsLen)
-
+	want := make([]int, 0, itemsLen)
 	for i := range itemsLen {
 		s.Add(i)
-		forCheck = append(forCheck, i)
+		want = append(want, i)
 	}
-
-	items := s.Items()
-	if slices.Equal(items, forCheck) {
-		t.Errorf("want = %v, got = %v", forCheck, items)
+	got := s.Items()
+	slices.Sort(got) // порядок Items() не специфицирован
+	if !slices.Equal(got, want) {
+		t.Errorf("want = %v, got = %v", want, got)
 	}
 }
